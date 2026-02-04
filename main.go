@@ -104,21 +104,24 @@ type State struct {
 	Image []float32
 }
 
+const (
+	// Width is the width of the model
+	Width = 256
+	// EmbeddingSize is the size of the embedding
+	EmbeddingSize = 7
+)
+
 // LearnEmbedding learns the embedding
 func LearnEmbedding(rng *rand.Rand, buffer []State) {
 	others := tf32.NewSet()
-	others.Add("x", 256, len(buffer))
+	others.Add("x", Width, len(buffer))
 	x := others.ByName["x"]
 	for i := range buffer {
 		x.X = append(x.X, buffer[i].Image...)
 	}
 
 	set := tf32.NewSet()
-	set.Add("i", 7, 128)
-	set.Add("w0", 256, 256)
-	set.Add("b0", 256)
-	set.Add("w1", 2*256, 256)
-	set.Add("b1", 256)
+	set.Add("i", EmbeddingSize, len(buffer))
 
 	for ii := range set.Weights {
 		w := set.Weights[ii]
