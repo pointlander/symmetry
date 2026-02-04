@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 
 	"golang.org/x/crypto/sha3"
@@ -302,6 +303,19 @@ func (m *Embedding) Get(markov Markov) []float32 {
 	return m.Root
 }
 
+func cs(a, b []float32) float32 {
+	ab := tf32.Dot(a, b)
+	aa := tf32.Dot(a, a)
+	bb := tf32.Dot(b, b)
+	if aa <= 0 {
+		return 0
+	}
+	if bb <= 0 {
+		return 0
+	}
+	return ab / (float32(math.Sqrt(float64(aa))) * float32(math.Sqrt(float64(bb))))
+}
+
 func main() {
 	data := []byte("andy")
 	crc := crc64.Checksum(data, crc64.MakeTable(crc64.ISO))
@@ -379,6 +393,78 @@ func main() {
 		for i := range buffer {
 			model.Set(save, buffer[i])
 			save.Iterate(buffer[i].Symbol)
+		}
+	}
+
+	{
+		prompt := []byte("What is the meaning of life?")
+		markov := Markov{}
+		buffer := make([]State, len(prompt))
+		for i, symbol := range prompt {
+			markov.Iterate(symbol)
+			embedding := embedding.Get(markov)
+			buffer[i].Image = embedding
+			buffer[i].Symbol = symbol
+		}
+		for {
+			LearnEmbedding(rng, buffer)
+			type Result struct {
+				Symbols []byte
+				Cost    float32
+			}
+			process := func(markov Markov) Result {
+				symbols := make([]byte, 0, 33)
+				current := buffer[len(buffer)-1].Embedding
+				cost := float32(0.0)
+				for range 33 {
+					bucket := model.Get(markov)
+					sum := float32(0.0)
+					d := make([]float32, len(bucket))
+					for i, entry := range bucket {
+						x := cs(current, entry.Embedding)
+						if x < 0 {
+							x = -x
+						}
+						d[i] = x
+						sum += x
+					}
+					total, selected, index := float32(0.0), rng.Float32(), 0
+					for i := range bucket {
+						total += d[i] / sum
+						if selected < total {
+							index = i
+							break
+						}
+					}
+					symbol := bucket[index].Symbol
+					symbols = append(symbols, symbol)
+					cost += d[index] / sum
+					current = bucket[index].Embedding
+					markov.Iterate(symbol)
+				}
+				return Result{
+					Symbols: symbols,
+					Cost:    cost,
+				}
+			}
+			results := make([]Result, 0, 1024)
+			for range 1024 {
+				result := process(markov)
+				results = append(results, result)
+			}
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].Cost > results[j].Cost
+			})
+			symbol := results[0].Symbols[0]
+			fmt.Printf("%c", symbol)
+			markov.Iterate(symbol)
+			embedding := embedding.Get(markov)
+			buffer = append(buffer, State{
+				Image: embedding,
+				Shard: Shard{
+					Symbol: symbol,
+				},
+			})
 		}
 	}
 }
