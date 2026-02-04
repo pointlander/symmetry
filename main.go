@@ -192,7 +192,7 @@ func LearnEmbedding(rng *rand.Rand, buffer []State) {
 				w.X[ii] -= Eta * mhat / (float32(math.Sqrt(float64(vhat))) + 1e-8)
 			}
 		}
-		fmt.Println(iteration, l)
+		//fmt.Println(iteration, l)
 	}
 
 	ii := set.ByName["i"]
@@ -215,6 +215,46 @@ func (m *Markov) Iterate(s byte) {
 		m[i] = m[i+1]
 	}
 	m[len(*m)-1] = s
+}
+
+// Bucket is the entry in a markov model
+type Bucket []Shard
+
+// Model is a markov model
+type Model struct {
+	Model [Order]map[Markov]Bucket
+	Root  Bucket
+}
+
+// NewModel creates a new model
+func NewModel() (model Model) {
+	for i := range model.Model {
+		model.Model[i] = make(map[Markov]Bucket)
+	}
+	return model
+}
+
+// Set sets an entry
+func (m *Model) Set(markov Markov, entry State) {
+	for i := range Order {
+		bucket := m.Model[i][markov]
+		bucket = append(bucket, entry.Shard)
+		m.Model[i][markov] = bucket
+		markov[i] = 0
+	}
+	m.Root = append(m.Root, entry.Shard)
+}
+
+// Get gets an entry
+func (m *Model) Get(markov Markov) Bucket {
+	for i := range Order {
+		bucket := m.Model[i][markov]
+		if bucket != nil {
+			return bucket
+		}
+		markov[i] = 0
+	}
+	return m.Root
 }
 
 // Embedding is a markov model
@@ -322,11 +362,22 @@ func main() {
 	}
 	buffer := make([]State, 128)
 	markov = Markov{}
-	for i, symbol := range book.Text[:128] {
-		markov.Iterate(symbol)
-		embedding := embedding.Get(markov)
-		buffer[i].Image = embedding
-		buffer[i].Symbol = symbol
+	model := NewModel()
+	for block := range 16 {
+		fmt.Println("block", block)
+		for i, symbol := range book.Text[128*block : 128*block+128] {
+			markov.Iterate(symbol)
+			embedding := embedding.Get(markov)
+			buffer[i].Image = embedding
+			buffer[i].Symbol = symbol
+		}
+		LearnEmbedding(rng, buffer)
+		{
+			markov := markov
+			for i := range buffer {
+				model.Set(markov, buffer[i])
+				markov.Iterate(buffer[i].Symbol)
+			}
+		}
 	}
-	LearnEmbedding(rng, buffer)
 }
