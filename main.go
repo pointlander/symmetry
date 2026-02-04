@@ -368,6 +368,7 @@ func main() {
 	model := NewModel()
 	for block := range 16 {
 		fmt.Println("block", block)
+		save := markov
 		for i, symbol := range book.Text[128*block : 128*block+128] {
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
@@ -375,12 +376,9 @@ func main() {
 			buffer[i].Symbol = symbol
 		}
 		LearnEmbedding(rng, buffer)
-		{
-			markov := markov
-			for i := range buffer {
-				model.Set(markov, buffer[i])
-				markov.Iterate(buffer[i].Symbol)
-			}
+		for i := range buffer {
+			model.Set(save, buffer[i])
+			save.Iterate(buffer[i].Symbol)
 		}
 	}
 }
