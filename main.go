@@ -506,12 +506,13 @@ func main() {
 			sort.Slice(results, func(i, j int) bool {
 				return results[i].Cost > results[j].Cost
 			})
+			index := 0
 			sum := float32(0.0)
-			for i := range results {
+			for i := range results[:33] {
 				sum += results[i].Cost
 			}
 			total, selected, index := float32(0.0), rng.Float32(), 0
-			for i := range results {
+			for i := range results[:33] {
 				total += results[i].Cost / sum
 				if selected < total {
 					index = i
