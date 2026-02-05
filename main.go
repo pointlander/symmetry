@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -316,6 +317,52 @@ func cs(a, b []float32) float32 {
 	return ab / (float32(math.Sqrt(float64(aa))) * float32(math.Sqrt(float64(bb))))
 }
 
+// Walk is a walk on a model
+type Walk struct {
+	Symbols []byte
+	Cost    float32
+}
+
+func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan Walk) {
+	rng := rand.New(rand.NewSource(seed))
+	symbols := make([]byte, 0, 1024)
+	cost := float32(0.0)
+	context := make([]float32, len(current))
+	copy(context, current)
+	for range 1024 {
+		bucket := model.Get(markov)
+		sum := float32(0.0)
+		d := make([]float32, len(bucket))
+		for i, entry := range bucket {
+			x := cs(context, entry.Embedding)
+			if x < 0 {
+				x = -x
+			}
+			d[i] = x
+			sum += x
+		}
+		total, selected, index := float32(0.0), rng.Float32(), 0
+		for i := range bucket {
+			total += d[i] / sum
+			if selected < total {
+				index = i
+				break
+			}
+		}
+		symbol := bucket[index].Symbol
+		symbols = append(symbols, symbol)
+		cost += d[index] / sum
+		for i := range context {
+			context[i] = (context[i] + bucket[index].Embedding[i]) / 2
+		}
+		markov.Iterate(symbol)
+	}
+	done <- Walk{
+		Symbols: symbols,
+		Cost:    cost,
+	}
+}
+
 func main() {
 	data := []byte("andy")
 	crc := crc64.Checksum(data, crc64.MakeTable(crc64.ISO))
@@ -422,52 +469,23 @@ func main() {
 					current[i] = (current[i] + buffer[len(buffer)-1].Embedding[i]) / 2
 				}
 			}
-			type Result struct {
-				Symbols []byte
-				Cost    float32
+			results := make([]Walk, 0, 8*1024)
+			i, flight, done, cpus := 0, 0, make(chan Walk, 8), runtime.NumCPU()
+			for i < 8*1024 && flight < cpus {
+				go model.Walk(rng.Int63(), markov, current, done)
+				flight++
+				i++
 			}
-			process := func(markov Markov, current []float32) Result {
-				symbols := make([]byte, 0, 128)
-				cost := float32(0.0)
-				context := make([]float32, len(current))
-				copy(context, current)
-				for range 128 {
-					bucket := model.Get(markov)
-					sum := float32(0.0)
-					d := make([]float32, len(bucket))
-					for i, entry := range bucket {
-						x := cs(context, entry.Embedding)
-						if x < 0 {
-							x = -x
-						}
-						d[i] = x
-						sum += x
-					}
-					total, selected, index := float32(0.0), rng.Float32(), 0
-					for i := range bucket {
-						total += d[i] / sum
-						if selected < total {
-							index = i
-							break
-						}
-					}
-					symbol := bucket[index].Symbol
-					symbols = append(symbols, symbol)
-					cost += d[index] / sum
-					for i := range context {
-						context[i] = (context[i] + bucket[index].Embedding[i]) / 2
-					}
-					markov.Iterate(symbol)
-				}
-				return Result{
-					Symbols: symbols,
-					Cost:    cost,
-				}
+			for i < 8*1024 {
+				results = append(results, <-done)
+				flight--
+
+				go model.Walk(rng.Int63(), markov, current, done)
+				flight++
+				i++
 			}
-			results := make([]Result, 0, 8*1024)
-			for range 8 * 1024 {
-				result := process(markov, current)
-				results = append(results, result)
+			for range flight {
+				results = append(results, <-done)
 			}
 			sort.Slice(results, func(i, j int) bool {
 				return results[i].Cost > results[j].Cost
