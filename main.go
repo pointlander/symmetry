@@ -319,13 +319,13 @@ func cs(a, b []float32) float32 {
 
 // Walk is a walk on a model
 type Walk struct {
-	Symbols []byte
+	Symbols []Shard
 	Cost    float32
 }
 
 func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan Walk) {
 	rng := rand.New(rand.NewSource(seed))
-	symbols := make([]byte, 0, 1024)
+	symbols := make([]Shard, 0, 1024)
 	cost := float32(0.0)
 	context := make([]float32, len(current))
 	copy(context, current)
@@ -349,7 +349,7 @@ func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan
 				break
 			}
 		}
-		symbol := bucket[index].Symbol
+		symbol := bucket[index]
 		symbols = append(symbols, symbol)
 		cost += d[index] / sum
 		for i := range context {
@@ -360,7 +360,7 @@ func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan
 		for i, count := range current {
 			current[i] = count / factor
 		}
-		markov.Iterate(symbol)
+		markov.Iterate(symbol.Symbol)
 	}
 	done <- Walk{
 		Symbols: symbols,
@@ -433,7 +433,7 @@ func main() {
 	buffer := make([]State, 128)
 	markov = Markov{}
 	model := NewModel()
-	for block := range 64 {
+	for block := range 1024 {
 		fmt.Println("block", block)
 		save := markov
 		for i, symbol := range book.Text[128*block : 128*block+128] {
@@ -461,8 +461,9 @@ func main() {
 		}
 		var current []float32
 		for {
-			LearnEmbedding(rng, buffer)
+			//LearnEmbedding(rng, buffer)
 			if current == nil {
+				LearnEmbedding(rng, buffer)
 				current = make([]float32, EmbeddingSize)
 				copy(current, buffer[0].Embedding)
 				for _, entry := range buffer {
@@ -475,7 +476,7 @@ func main() {
 						current[i] = count / factor
 					}
 				}
-			} else {
+			} /*else {
 				for i := range current {
 					current[i] = (current[i] + buffer[len(buffer)-1].Embedding[i])
 				}
@@ -484,7 +485,7 @@ func main() {
 				for i, count := range current {
 					current[i] = count / factor
 				}
-			}
+			}*/
 			results := make([]Walk, 0, 8*1024)
 			i, flight, done, cpus := 0, 0, make(chan Walk, 8), runtime.NumCPU()
 			for i < 8*1024 && flight < cpus {
@@ -519,10 +520,18 @@ func main() {
 					break
 				}
 			}
-			symbol := results[index].Symbols[0]
+			symbol := results[index].Symbols[0].Symbol
 			fmt.Printf("%c", symbol)
+			for i := range current {
+				current[i] = (current[i] + results[index].Symbols[0].Embedding[i])
+			}
+			factor := tf32.Dot(current, current)
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range current {
+				current[i] = count / factor
+			}
 			markov.Iterate(symbol)
-			embedding := embedding.Get(markov)
+			/*embedding := embedding.Get(markov)
 			if len(buffer) < 33 {
 				buffer = append(buffer, State{
 					Image: embedding,
@@ -540,7 +549,7 @@ func main() {
 						Symbol: symbol,
 					},
 				}
-			}
+			}*/
 		}
 	}
 }
