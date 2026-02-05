@@ -427,9 +427,9 @@ func main() {
 				Cost    float32
 			}
 			process := func(markov Markov) Result {
-				symbols := make([]byte, 0, 33)
+				symbols := make([]byte, 0, 128)
 				cost := float32(0.0)
-				for range 33 {
+				for range 128 {
 					bucket := model.Get(markov)
 					sum := float32(0.0)
 					d := make([]float32, len(bucket))
