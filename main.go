@@ -334,7 +334,7 @@ func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan
 		sum := float32(0.0)
 		d := make([]float32, len(bucket))
 		for i, entry := range bucket {
-			x := cs(context, entry.Embedding)
+			x := tf32.Dot(context, entry.Embedding)
 			if x < 0 {
 				x = -x
 			}
@@ -353,7 +353,12 @@ func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan
 		symbols = append(symbols, symbol)
 		cost += d[index] / sum
 		for i := range context {
-			context[i] = (context[i] + bucket[index].Embedding[i]) / 2
+			context[i] = (context[i] + bucket[index].Embedding[i])
+		}
+		factor := tf32.Dot(current, current)
+		factor = float32(math.Sqrt(float64(factor)))
+		for i, count := range current {
+			current[i] = count / factor
 		}
 		markov.Iterate(symbol)
 	}
@@ -406,22 +411,23 @@ func main() {
 	rng := rand.New(rand.NewSource(1))
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			sum := float32(0.0)
-			for _, count := range value {
-				sum += count
+			factor := tf32.Dot(value, value)
+			if factor <= 0 {
+				continue
 			}
+			factor = float32(math.Sqrt(float64(factor)))
 			for j, count := range value {
-				value[j] = count / sum
+				value[j] = count / factor
 			}
 		}
 	}
 	{
-		sum := float32(0.0)
-		for _, count := range embedding.Root {
-			sum += count
-		}
-		for i, count := range embedding.Root {
-			embedding.Root[i] = count / sum
+		factor := tf32.Dot(embedding.Root, embedding.Root)
+		if factor > 0 {
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range embedding.Root {
+				embedding.Root[i] = count / factor
+			}
 		}
 	}
 	buffer := make([]State, 128)
@@ -461,12 +467,22 @@ func main() {
 				copy(current, buffer[0].Embedding)
 				for _, entry := range buffer {
 					for i := range current {
-						current[i] = (current[i] + entry.Embedding[i]) / 2
+						current[i] = (current[i] + entry.Embedding[i])
+					}
+					factor := tf32.Dot(current, current)
+					factor = float32(math.Sqrt(float64(factor)))
+					for i, count := range current {
+						current[i] = count / factor
 					}
 				}
 			} else {
 				for i := range current {
-					current[i] = (current[i] + buffer[len(buffer)-1].Embedding[i]) / 2
+					current[i] = (current[i] + buffer[len(buffer)-1].Embedding[i])
+				}
+				factor := tf32.Dot(current, current)
+				factor = float32(math.Sqrt(float64(factor)))
+				for i, count := range current {
+					current[i] = count / factor
 				}
 			}
 			results := make([]Walk, 0, 8*1024)
