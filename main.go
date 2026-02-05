@@ -380,7 +380,7 @@ func main() {
 	buffer := make([]State, 128)
 	markov = Markov{}
 	model := NewModel()
-	for block := range 16 {
+	for block := range 64 {
 		fmt.Println("block", block)
 		save := markov
 		for i, symbol := range book.Text[128*block : 128*block+128] {
@@ -406,15 +406,28 @@ func main() {
 			buffer[i].Image = embedding
 			buffer[i].Symbol = symbol
 		}
+		var current []float32
 		for {
 			LearnEmbedding(rng, buffer)
+			if current == nil {
+				current = make([]float32, EmbeddingSize)
+				copy(current, buffer[0].Embedding)
+				for _, entry := range buffer {
+					for i := range current {
+						current[i] = (current[i] + entry.Embedding[i]) / 2
+					}
+				}
+			} else {
+				for i := range current {
+					current[i] = (current[i] + buffer[len(buffer)-1].Embedding[i]) / 2
+				}
+			}
 			type Result struct {
 				Symbols []byte
 				Cost    float32
 			}
 			process := func(markov Markov) Result {
 				symbols := make([]byte, 0, 33)
-				current := buffer[len(buffer)-1].Embedding
 				cost := float32(0.0)
 				for range 33 {
 					bucket := model.Get(markov)
@@ -447,24 +460,48 @@ func main() {
 					Cost:    cost,
 				}
 			}
-			results := make([]Result, 0, 1024)
-			for range 1024 {
+			results := make([]Result, 0, 8*1024)
+			for range 8 * 1024 {
 				result := process(markov)
 				results = append(results, result)
 			}
 			sort.Slice(results, func(i, j int) bool {
 				return results[i].Cost > results[j].Cost
 			})
-			symbol := results[0].Symbols[0]
+			sum := float32(0.0)
+			for i := range results {
+				sum += results[i].Cost
+			}
+			total, selected, index := float32(0.0), rng.Float32(), 0
+			for i := range results {
+				total += results[i].Cost / sum
+				if selected < total {
+					index = i
+					break
+				}
+			}
+			symbol := results[index].Symbols[0]
 			fmt.Printf("%c", symbol)
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
-			buffer = append(buffer, State{
-				Image: embedding,
-				Shard: Shard{
-					Symbol: symbol,
-				},
-			})
+			if len(buffer) < 33 {
+				buffer = append(buffer, State{
+					Image: embedding,
+					Shard: Shard{
+						Symbol: symbol,
+					},
+				})
+			} else {
+				for i := range buffer[:len(buffer)-1] {
+					buffer[i] = buffer[i+1]
+				}
+				buffer[len(buffer)-1] = State{
+					Image: embedding,
+					Shard: Shard{
+						Symbol: symbol,
+					},
+				}
+			}
 		}
 	}
 }
