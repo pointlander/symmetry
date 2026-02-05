@@ -426,15 +426,17 @@ func main() {
 				Symbols []byte
 				Cost    float32
 			}
-			process := func(markov Markov) Result {
+			process := func(markov Markov, current []float32) Result {
 				symbols := make([]byte, 0, 128)
 				cost := float32(0.0)
+				context := make([]float32, len(current))
+				copy(context, current)
 				for range 128 {
 					bucket := model.Get(markov)
 					sum := float32(0.0)
 					d := make([]float32, len(bucket))
 					for i, entry := range bucket {
-						x := cs(current, entry.Embedding)
+						x := cs(context, entry.Embedding)
 						if x < 0 {
 							x = -x
 						}
@@ -452,7 +454,9 @@ func main() {
 					symbol := bucket[index].Symbol
 					symbols = append(symbols, symbol)
 					cost += d[index] / sum
-					current = bucket[index].Embedding
+					for i := range context {
+						context[i] = (context[i] + bucket[index].Embedding[i]) / 2
+					}
 					markov.Iterate(symbol)
 				}
 				return Result{
@@ -462,7 +466,7 @@ func main() {
 			}
 			results := make([]Result, 0, 8*1024)
 			for range 8 * 1024 {
-				result := process(markov)
+				result := process(markov, current)
 				results = append(results, result)
 			}
 			sort.Slice(results, func(i, j int) bool {
