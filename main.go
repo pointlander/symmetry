@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"embed"
 	"encoding/base32"
+	"flag"
 	"fmt"
 	"hash/crc64"
 	"io"
@@ -368,7 +369,8 @@ func (model *Model) Walk(seed int64, markov Markov, current []float32, done chan
 	}
 }
 
-func main() {
+// MarkovMode stores the vector symbol pairs in markov model
+func MarkovMode() {
 	data := []byte("andy")
 	crc := crc64.Checksum(data, crc64.MakeTable(crc64.ISO))
 	seed := int64(crc & math.MaxInt64)
@@ -551,5 +553,31 @@ func main() {
 				}
 			}*/
 		}
+	}
+}
+
+// TreeMode stores the vector symbol pairs in aa tree
+func TreeMode() {
+
+}
+
+var (
+	// FlagMarkov is the markov mode
+	FlagMarkov = flag.Bool("markov", false, "markov mode")
+	// FlagTree is the tree mode
+	FlagTree = flag.Bool("tree", false, "tree mode")
+)
+
+func main() {
+	flag.Parse()
+
+	if *FlagMarkov {
+		MarkovMode()
+		return
+	}
+
+	if *FlagTree {
+		TreeMode()
+		return
 	}
 }
