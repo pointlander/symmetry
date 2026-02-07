@@ -15,6 +15,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -99,6 +100,32 @@ func (r *Reader) Read(p []byte) (n int, err error) {
 type Shard struct {
 	Embedding []float32
 	Symbol    byte
+}
+
+// Write writes a shard
+func (s Shard) Write(output *os.File) {
+	buffer := make([]byte, 4)
+	for _, value := range s.Embedding {
+		bits := math.Float32bits(value)
+		for i := range buffer {
+			buffer[i] = byte((bits >> (8 * i)) & 0xFF)
+		}
+		count, err := output.Write(buffer)
+		if err != nil {
+			panic(err)
+		}
+		if count != len(buffer) {
+			panic("not all bytes written")
+		}
+	}
+	buffer[0] = s.Symbol
+	count, err := output.Write(buffer[:1])
+	if err != nil {
+		panic(err)
+	}
+	if count != 1 {
+		panic("one byte was not written")
+	}
 }
 
 // State is a state
@@ -556,9 +583,109 @@ func MarkovMode() {
 	}
 }
 
+// Level is a tree level
+type Level struct {
+	Output *os.File
+	Shards []Shard
+}
+
 // TreeMode stores the vector symbol pairs in aa tree
 func TreeMode() {
+	books := LoadBooks()
+	book := books[1]
+	fmt.Println("length", len(book.Text))
+	embedding := NewEmbedding()
+	markov := Markov{}
+	var previous byte
+	for i, value := range book.Text[:len(book.Text)-1] {
+		markov.Iterate(value)
+		next := book.Text[i+1]
+		embedding.Set(markov, value, previous, next)
+		previous = value
+	}
 
+	rng := rand.New(rand.NewSource(1))
+	for i := range embedding.Model {
+		for _, value := range embedding.Model[i] {
+			factor := tf32.Dot(value, value)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range value {
+				value[j] = count / factor
+			}
+		}
+	}
+	{
+		factor := tf32.Dot(embedding.Root, embedding.Root)
+		if factor > 0 {
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range embedding.Root {
+				embedding.Root[i] = count / factor
+			}
+		}
+	}
+	buffer := make([]State, 128)
+	markov = Markov{}
+	tree := make([]Level, 1, 8)
+	var err error
+	tree[0].Output, err = os.Create("tree/0.bin")
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		for i := range tree {
+			tree[i].Output.Close()
+		}
+	}()
+	for block := range 1024 {
+		fmt.Println("block", block)
+		for i, symbol := range book.Text[128*block : 128*block+128] {
+			markov.Iterate(symbol)
+			embedding := embedding.Get(markov)
+			buffer[i].Image = embedding
+			buffer[i].Symbol = symbol
+		}
+		LearnEmbedding(rng, buffer)
+		for i := range buffer {
+			tree[0].Shards = append(tree[0].Shards, buffer[i].Shard)
+			for j := range tree {
+				if len(tree[j].Shards)%2 == 0 && len(tree[j].Shards) > 1 {
+					vector := make([]float32, EmbeddingSize)
+					offset := len(tree[j].Shards) - 2
+					for k := range tree[j].Shards[offset].Embedding {
+						vector[k] = tree[j].Shards[offset].Embedding[k] +
+							tree[j].Shards[offset+1].Embedding[k]
+					}
+					done := false
+					if j+1 >= len(tree) {
+						done = true
+						output, err := os.Create(fmt.Sprintf("tree/%d.bin", j+1))
+						if err != nil {
+							panic(err)
+						}
+						tree = append(tree, Level{
+							Output: output,
+						})
+					}
+					tree[j+1].Shards = append(tree[j+1].Shards, Shard{
+						Embedding: vector,
+					})
+					if done {
+						break
+					}
+				} else {
+					break
+				}
+			}
+		}
+	}
+	for i := range tree {
+		for j := range tree[i].Shards {
+			tree[i].Shards[j].Write(tree[i].Output)
+		}
+	}
 }
 
 var (
