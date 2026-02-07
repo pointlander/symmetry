@@ -18,6 +18,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/sha3"
@@ -589,6 +590,120 @@ type Level struct {
 	Shards []Shard
 }
 
+func (l Level) Read(index int) Shard {
+	_, err := l.Output.Seek(int64(index*(1+4*EmbeddingSize)), 0)
+	if err != nil {
+		panic(err)
+	}
+	shard := Shard{
+		Embedding: make([]float32, EmbeddingSize),
+	}
+	buffer := make([]byte, 4)
+	for i := range shard.Embedding {
+		count, err := l.Output.Read(buffer)
+		if err != nil {
+			panic(err)
+		}
+		if count != len(buffer) {
+			panic("not all bytes written")
+		}
+		bits := uint32(0)
+		for j := range buffer {
+			bits |= uint32(buffer[j]) << (8 * j)
+		}
+		shard.Embedding[i] = math.Float32frombits(bits)
+	}
+	count, err := l.Output.Read(buffer[:1])
+	if err != nil {
+		panic(err)
+	}
+	if count != 1 {
+		panic("one byte was not written")
+	}
+	shard.Symbol = buffer[0]
+	return shard
+}
+
+// Tree is a tree
+type Tree struct {
+	Levels []Level
+}
+
+// NewTree loads a tree
+func NewTree() Tree {
+	entries, err := os.ReadDir("./tree")
+	if err != nil {
+		panic(err)
+	}
+	max := 0
+	for _, entry := range entries {
+		parts := strings.Split(entry.Name(), ".")
+		if len(parts) != 2 {
+			panic("there should be two parts")
+		}
+		level, err := strconv.Atoi(parts[0])
+		if err != nil {
+			panic("part should be int")
+		}
+		if level > max {
+			max = level
+		}
+	}
+	levels := make([]Level, max+1)
+	for _, entry := range entries {
+		parts := strings.Split(entry.Name(), ".")
+		if len(parts) != 2 {
+			panic("there should be two parts")
+		}
+		level, err := strconv.Atoi(parts[0])
+		if err != nil {
+			panic("part should be int")
+		}
+		input, err := os.Open("./tree/" + entry.Name())
+		if err != nil {
+			panic(err)
+		}
+		levels[level].Output = input
+	}
+	return Tree{
+		Levels: levels,
+	}
+}
+
+// Lookup looks a shard up
+func (t Tree) Lookup(rng *rand.Rand, vector []float32) Shard {
+	left, right := 0, 1
+	shard := Shard{}
+	for l := len(t.Levels) - 2; l >= 0; l-- {
+		ll := t.Levels[l].Read(left)
+		rr := t.Levels[l].Read(right)
+		a := cs(ll.Embedding, vector)
+		if a < 0 {
+			a = -a
+		}
+		b := cs(rr.Embedding, vector)
+		if b < 0 {
+			b = -b
+		}
+		sum := a + b
+		if rng.Float32() < a/sum {
+			left, right = left*2, left*2+1
+			shard = ll
+		} else {
+			left, right = right*2, right*2+1
+			shard = rr
+		}
+	}
+	return shard
+}
+
+// Close closes all of the tree files
+func (t Tree) Close() {
+	for i := range t.Levels {
+		t.Levels[i].Output.Close()
+	}
+}
+
 // TreeMode stores the vector symbol pairs in aa tree
 func TreeMode() {
 	books := LoadBooks()
@@ -626,6 +741,40 @@ func TreeMode() {
 			}
 		}
 	}
+
+	if *FlagPrompt != "" {
+		markov := Markov{}
+		prompt := []byte(*FlagPrompt)
+		buffer := make([]State, len(prompt))
+		for i, symbol := range prompt {
+			markov.Iterate(symbol)
+			embedding := embedding.Get(markov)
+			buffer[i].Image = embedding
+			buffer[i].Symbol = symbol
+		}
+		var current []float32
+		LearnEmbedding(rng, buffer)
+		current = make([]float32, EmbeddingSize)
+		copy(current, buffer[0].Embedding)
+		for _, entry := range buffer {
+			for i := range current {
+				current[i] = (current[i] + entry.Embedding[i])
+			}
+			factor := tf32.Dot(current, current)
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range current {
+				current[i] = count / factor
+			}
+		}
+		tree := NewTree()
+		defer tree.Close()
+		fmt.Println(len(tree.Levels))
+		fmt.Println(tree.Lookup(rng, current))
+		for {
+
+		}
+	}
+
 	buffer := make([]State, 128)
 	markov = Markov{}
 	tree := make([]Level, 1, 8)
@@ -693,6 +842,8 @@ var (
 	FlagMarkov = flag.Bool("markov", false, "markov mode")
 	// FlagTree is the tree mode
 	FlagTree = flag.Bool("tree", false, "tree mode")
+	// FlagPrompt inference mode
+	FlagPrompt = flag.String("prompt", "", "inference mode")
 )
 
 func main() {
@@ -703,7 +854,7 @@ func main() {
 		return
 	}
 
-	if *FlagTree {
+	if *FlagTree || *FlagPrompt != "" {
 		TreeMode()
 		return
 	}
