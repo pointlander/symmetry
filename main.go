@@ -671,9 +671,10 @@ func NewTree() Tree {
 }
 
 // Lookup looks a shard up
-func (t Tree) Lookup(rng *rand.Rand, vector []float32) Shard {
+func (t Tree) Lookup(rng *rand.Rand, vector []float32) (Shard, float32) {
 	left, right := 0, 1
 	shard := Shard{}
+	cost := float32(0)
 	for l := len(t.Levels) - 2; l >= 0; l-- {
 		ll := t.Levels[l].Read(left)
 		rr := t.Levels[l].Read(right)
@@ -689,12 +690,49 @@ func (t Tree) Lookup(rng *rand.Rand, vector []float32) Shard {
 		if rng.Float32() < a/sum {
 			left, right = left*2, left*2+1
 			shard = ll
+			cost += a / sum
 		} else {
 			left, right = right*2, right*2+1
 			shard = rr
+			cost += b / sum
 		}
 	}
-	return shard
+	return shard, cost
+}
+
+// Job is a walk job
+type Job struct {
+	Walk
+	T *Tree
+}
+
+// Walk performs mcts
+func (t *Tree) Walk(seed int64, current []float32, done chan Job) {
+	rng := rand.New(rand.NewSource(seed))
+	symbols := make([]Shard, 0, 1024)
+	cost := float32(0.0)
+	context := make([]float32, len(current))
+	copy(context, current)
+	for range 1024 {
+		symbol, d := t.Lookup(rng, current)
+		symbols = append(symbols, symbol)
+		cost += d
+		for i := range context {
+			context[i] = (context[i] + symbol.Embedding[i])
+		}
+		factor := tf32.Dot(current, current)
+		factor = float32(math.Sqrt(float64(factor)))
+		for i, count := range current {
+			current[i] = count / factor
+		}
+	}
+	done <- Job{
+		Walk: Walk{
+			Symbols: symbols,
+			Cost:    cost,
+		},
+		T: t,
+	}
 }
 
 // Close closes all of the tree files
@@ -766,12 +804,64 @@ func TreeMode() {
 				current[i] = count / factor
 			}
 		}
-		tree := NewTree()
-		defer tree.Close()
-		fmt.Println(len(tree.Levels))
-		fmt.Println(tree.Lookup(rng, current))
+		trees := make([]Tree, runtime.NumCPU())
+		for i := range trees {
+			trees[i] = NewTree()
+		}
+		defer func() {
+			for i := range trees {
+				trees[i].Close()
+			}
+		}()
+		fmt.Println(len(trees[0].Levels))
+		fmt.Println(trees[0].Lookup(rng, current))
 		for {
+			results := make([]Walk, 0, 8*1024)
+			i, flight, done, cpus := 0, 0, make(chan Job, 8), runtime.NumCPU()
+			for i < 256 && flight < cpus {
+				go trees[flight].Walk(rng.Int63(), current, done)
+				flight++
+				i++
+			}
+			for i < 256 {
+				result := <-done
+				results = append(results, result.Walk)
+				flight--
 
+				go result.T.Walk(rng.Int63(), current, done)
+				flight++
+				i++
+			}
+			for range flight {
+				result := <-done
+				results = append(results, result.Walk)
+			}
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].Cost > results[j].Cost
+			})
+			index := 0
+			sum := float32(0.0)
+			for i := range results[:33] {
+				sum += results[i].Cost
+			}
+			total, selected, index := float32(0.0), rng.Float32(), 0
+			for i := range results[:33] {
+				total += results[i].Cost / sum
+				if selected < total {
+					index = i
+					break
+				}
+			}
+			symbol := results[index].Symbols[0].Symbol
+			fmt.Printf("%c", symbol)
+			for i := range current {
+				current[i] = (current[i] + results[index].Symbols[0].Embedding[i])
+			}
+			factor := tf32.Dot(current, current)
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range current {
+				current[i] = count / factor
+			}
 		}
 	}
 
