@@ -5,10 +5,13 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"compress/bzip2"
 	"crypto/ed25519"
 	"embed"
 	"encoding/base32"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"hash/crc64"
@@ -24,6 +27,8 @@ import (
 	"golang.org/x/crypto/sha3"
 
 	"github.com/pointlander/gradient/tf32"
+	"github.com/pointlander/gradient/tf64"
+	"github.com/pointlander/symmetry/kmeans"
 )
 
 const (
@@ -927,6 +932,229 @@ func TreeMode() {
 	}
 }
 
+//go:embed iris.zip
+var Iris embed.FS
+
+// Fisher is the fisher iris data
+type Fisher struct {
+	Measures  []float64
+	Embedding []float64
+	Label     string
+	L         byte
+	Cluster   int
+	Index     int
+}
+
+// Labels maps iris labels to ints
+var Labels = map[string]int{
+	"Iris-setosa":     0,
+	"Iris-versicolor": 1,
+	"Iris-virginica":  2,
+	"gen":             3,
+}
+
+// Inverse is the labels inverse map
+var Inverse = [4]string{
+	"Iris-setosa",
+	"Iris-versicolor",
+	"Iris-virginica",
+	"gen",
+}
+
+// Load loads the iris data set
+func Load() []Fisher {
+	file, err := Iris.Open("iris.zip")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		panic(err)
+	}
+
+	fisher := make([]Fisher, 0, 8)
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		panic(err)
+	}
+	for _, f := range reader.File {
+		if f.Name == "iris.data" {
+			iris, err := f.Open()
+			if err != nil {
+				panic(err)
+			}
+			reader := csv.NewReader(iris)
+			data, err := reader.ReadAll()
+			if err != nil {
+				panic(err)
+			}
+			for i, item := range data {
+				record := Fisher{
+					Measures: make([]float64, 4),
+					Label:    item[4],
+					Index:    i,
+				}
+				for ii := range item[:4] {
+					f, err := strconv.ParseFloat(item[ii], 64)
+					if err != nil {
+						panic(err)
+					}
+					record.Measures[ii] = f
+				}
+				fisher = append(fisher, record)
+			}
+			iris.Close()
+		}
+	}
+	return fisher
+}
+
+// LearnEmbeddingIris learns the iris embedding
+func LearnEmbeddingIris(iris []Fisher, size, width int) []Fisher {
+	const Eta = 1e-3
+	rng := rand.New(rand.NewSource(1))
+	others := tf64.NewSet()
+	length := len(iris)
+	cp := make([]Fisher, length)
+	copy(cp, iris)
+	others.Add("x", size, len(cp))
+	x := others.ByName["x"]
+	for _, row := range iris {
+		x.X = append(x.X, row.Measures...)
+	}
+
+	set := tf64.NewSet()
+	set.Add("i", width, len(cp))
+
+	for ii := range set.Weights {
+		w := set.Weights[ii]
+		if strings.HasPrefix(w.N, "b") {
+			w.X = w.X[:cap(w.X)]
+			w.States = make([][]float64, StateTotal)
+			for ii := range w.States {
+				w.States[ii] = make([]float64, len(w.X))
+			}
+			continue
+		}
+		factor := math.Sqrt(2.0 / float64(w.S[0]))
+		for range cap(w.X) {
+			w.X = append(w.X, rng.NormFloat64()*factor*.01)
+		}
+		w.States = make([][]float64, StateTotal)
+		for ii := range w.States {
+			w.States[ii] = make([]float64, len(w.X))
+		}
+	}
+
+	drop := .3
+	dropout := map[string]interface{}{
+		"rng":  rng,
+		"drop": &drop,
+	}
+
+	sa := tf64.T(tf64.Mul(tf64.Dropout(tf64.Square(set.Get("i")), dropout), tf64.T(others.Get("x"))))
+	loss := tf64.Avg(tf64.Quadratic(others.Get("x"), sa))
+
+	for iteration := range 2 * 1024 {
+		pow := func(x float64) float64 {
+			y := math.Pow(x, float64(iteration+1))
+			if math.IsNaN(y) || math.IsInf(y, 0) {
+				return 0
+			}
+			return y
+		}
+
+		set.Zero()
+		others.Zero()
+		l := tf64.Gradient(loss).X[0]
+		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
+			fmt.Println(iteration, l)
+			return nil
+		}
+
+		norm := 0.0
+		for _, p := range set.Weights {
+			for _, d := range p.D {
+				norm += d * d
+			}
+		}
+		norm = math.Sqrt(norm)
+		b1, b2 := pow(B1), pow(B2)
+		scaling := 1.0
+		if norm > 1 {
+			scaling = 1 / norm
+		}
+		for _, w := range set.Weights {
+			for ii, d := range w.D {
+				g := d * scaling
+				m := B1*w.States[StateM][ii] + (1-B1)*g
+				v := B2*w.States[StateV][ii] + (1-B2)*g*g
+				w.States[StateM][ii] = m
+				w.States[StateV][ii] = v
+				mhat := m / (1 - b1)
+				vhat := v / (1 - b2)
+				if vhat < 0 {
+					vhat = 0
+				}
+				w.X[ii] -= Eta * mhat / (math.Sqrt(vhat) + 1e-8)
+			}
+		}
+		fmt.Println(l)
+	}
+
+	meta := make([][]float64, len(cp))
+	for i := range meta {
+		meta[i] = make([]float64, len(cp))
+	}
+	const k = 3
+
+	{
+		y := set.ByName["i"]
+		vectors := make([][]float64, len(cp))
+		for i := range vectors {
+			row := make([]float64, width)
+			for ii := range row {
+				row[ii] = y.X[i*width+ii]
+			}
+			vectors[i] = row
+		}
+		for i := 0; i < 33; i++ {
+			clusters, _, err := kmeans.Kmeans(int64(i+1), vectors, k, kmeans.SquaredEuclideanDistance, -1)
+			if err != nil {
+				panic(err)
+			}
+			for i := 0; i < len(meta); i++ {
+				target := clusters[i]
+				for j, v := range clusters {
+					if v == target {
+						meta[i][j]++
+					}
+				}
+			}
+		}
+	}
+	clusters, _, err := kmeans.Kmeans(1, meta, 3, kmeans.SquaredEuclideanDistance, -1)
+	if err != nil {
+		panic(err)
+	}
+	for i := range clusters {
+		cp[i].Cluster = clusters[i]
+	}
+	for _, value := range x.X[len(iris)*size:] {
+		cp[len(iris)].Measures = append(cp[len(iris)].Measures, value)
+	}
+	I := set.ByName["i"]
+	for i := range cp {
+		cp[i].Embedding = I.X[i*width : (i+1)*width]
+	}
+	sort.Slice(cp, func(i, j int) bool {
+		return cp[i].Cluster < cp[j].Cluster
+	})
+	return cp
+}
+
 var (
 	// FlagMarkov is the markov mode
 	FlagMarkov = flag.Bool("markov", false, "markov mode")
@@ -947,5 +1175,22 @@ func main() {
 	if *FlagTree || *FlagPrompt != "" {
 		TreeMode()
 		return
+	}
+
+	rng := rand.New(rand.NewSource(1))
+	iris := Load()
+	rng.Shuffle(len(iris), func(i, j int) {
+		iris[i], iris[j] = iris[j], iris[i]
+	})
+	cp5 := LearnEmbeddingIris(iris, 4, 5)
+	acc5 := make(map[string][4]int)
+	for i := range cp5 {
+		fmt.Println(cp5[i].Cluster, cp5[i].Label)
+		counts := acc5[cp5[i].Label]
+		counts[cp5[i].Cluster]++
+		acc5[cp5[i].Label] = counts
+	}
+	for i, v := range acc5 {
+		fmt.Println(i, v)
 	}
 }
