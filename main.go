@@ -1012,7 +1012,7 @@ func Load() []Fisher {
 }
 
 // LearnEmbeddingIris learns the iris embedding
-func LearnEmbeddingIris(iris []Fisher, size, width int) []Fisher {
+func LearnEmbeddingIris(iris []Fisher, size, width, iterations int) []Fisher {
 	const Eta = 1e-3
 	rng := rand.New(rand.NewSource(1))
 	others := tf64.NewSet()
@@ -1057,7 +1057,7 @@ func LearnEmbeddingIris(iris []Fisher, size, width int) []Fisher {
 	sa := tf64.T(tf64.Mul(tf64.Dropout(tf64.Square(set.Get("i")), dropout), tf64.T(others.Get("x"))))
 	loss := tf64.Avg(tf64.Quadratic(others.Get("x"), sa))
 
-	for iteration := range 2 * 1024 {
+	for iteration := range iterations {
 		pow := func(x float64) float64 {
 			y := math.Pow(x, float64(iteration+1))
 			if math.IsNaN(y) || math.IsInf(y, 0) {
@@ -1182,13 +1182,25 @@ func main() {
 	rng.Shuffle(len(iris), func(i, j int) {
 		iris[i], iris[j] = iris[j], iris[i]
 	})
-	cp5 := LearnEmbeddingIris(iris, 4, 5)
+	cp5 := LearnEmbeddingIris(iris, 4, 5, 2*1024)
 	iris2 := make([]Fisher, len(cp5))
 	copy(iris2, cp5)
+	dot := func(a, b []float64) float64 {
+		x := 0.0
+		for i, value := range a {
+			x += value * b[i]
+		}
+		return x
+	}
 	for i := range iris2 {
 		iris2[i].Measures = iris2[i].Embedding
+		factor := dot(iris2[i].Measures, iris2[i].Measures)
+		factor = math.Sqrt(factor)
+		for j := range iris2[i].Measures {
+			iris2[i].Measures[j] /= factor
+		}
 	}
-	cp52 := LearnEmbeddingIris(iris2, 5, 5)
+	cp52 := LearnEmbeddingIris(iris2, 5, 5, 128)
 	acc5 := make(map[string][4]int)
 	for i := range cp5 {
 		fmt.Println(cp5[i].Cluster, cp5[i].Label)
