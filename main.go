@@ -1363,16 +1363,110 @@ func main() {
 	}
 
 	rng := rand.New(rand.NewSource(1))
+	set := tf32.NewSet()
+	set.Add("w0", 2, 32)
+	set.Add("b0", 32)
+	set.Add("w1", 64, 256)
+	set.Add("b1", 256)
+
+	for ii := range set.Weights {
+		w := set.Weights[ii]
+		if strings.HasPrefix(w.N, "b") {
+			w.X = w.X[:cap(w.X)]
+			w.States = make([][]float32, StateTotal)
+			for ii := range w.States {
+				w.States[ii] = make([]float32, len(w.X))
+			}
+			continue
+		}
+		factor := math.Sqrt(2.0 / float64(w.S[0]))
+		for range cap(w.X) {
+			w.X = append(w.X, float32(rng.NormFloat64()*factor))
+		}
+		w.States = make([][]float32, StateTotal)
+		for ii := range w.States {
+			w.States[ii] = make([]float32, len(w.X))
+		}
+	}
+
+	others := tf32.NewSet()
+	others.Add("input", 2)
+	others.Add("output", 256)
+	input := others.ByName["input"]
+	input.X = input.X[:cap(input.X)]
+	output := others.ByName["output"]
+	output.X = output.X[:cap(output.X)]
+
+	l0 := tf32.Everett(tf32.Add(tf32.Mul(set.Get("w0"), others.Get("input")), set.Get("b0")))
+	l1 := tf32.Add(tf32.Mul(set.Get("w1"), l0), set.Get("b1"))
+	loss := tf32.Quadratic(l1, others.Get("output"))
+
 	buffer := make([]State, 16)
 	for i := range buffer {
 		buffer[i].Image = make([]float32, Width+2)
 	}
 	markov = Markov{}
-	markov.Iterate(book.Text[0])
-	image := embedding.Get(markov)
-	copy(buffer[0].Image, image)
-	LearnEmbeddingBlock(rng, buffer)
-	for i := range buffer {
-		fmt.Println(buffer[i].Embedding)
+	for iteration, value := range book.Text[:1024] {
+		markov.Iterate(value)
+		image := embedding.Get(markov)
+		copy(buffer[0].Image, image)
+		LearnEmbeddingBlock(rng, buffer)
+		sum := make([]float32, 2)
+		for i := range buffer {
+			for j := range sum {
+				sum[j] += buffer[i].Embedding[j]
+			}
+			copy(buffer[i].Image[Width:], buffer[i].Embedding)
+		}
+
+		pow := func(x float32) float32 {
+			y := math.Pow(float64(x), float64(iteration+1))
+			if math.IsNaN(y) || math.IsInf(y, 0) {
+				return 0
+			}
+			return float32(y)
+		}
+
+		set.Zero()
+		others.Zero()
+		copy(input.X, sum)
+		for j := range output.X {
+			output.X[j] = 0
+		}
+		output.X[book.Text[iteration+1]] = 1
+		l := tf32.Gradient(loss).X[0]
+		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
+			fmt.Println(iteration, l)
+			return
+		}
+
+		norm := 0.0
+		for _, p := range set.Weights {
+			for _, d := range p.D {
+				norm += float64(d * d)
+			}
+		}
+		norm = math.Sqrt(norm)
+		b1, b2 := pow(B1), pow(B2)
+		scaling := 1.0
+		if norm > 1 {
+			scaling = 1 / norm
+		}
+		for _, w := range set.Weights {
+			for ii, d := range w.D {
+				g := d * float32(scaling)
+				m := B1*w.States[StateM][ii] + (1-B1)*g
+				v := B2*w.States[StateV][ii] + (1-B2)*g*g
+				w.States[StateM][ii] = m
+				w.States[StateV][ii] = v
+				mhat := m / (1 - b1)
+				vhat := v / (1 - b2)
+				if vhat < 0 {
+					vhat = 0
+				}
+				w.X[ii] -= Eta * mhat / (float32(math.Sqrt(float64(vhat))) + 1e-8)
+			}
+		}
+		fmt.Println(iteration, l)
 	}
 }
