@@ -1193,14 +1193,14 @@ func main() {
 		return x
 	}*/
 	for i := range iris2 {
-		iris2[i].Measures = iris2[i].Embedding
+		iris2[i].Measures = append(iris2[i].Measures, iris2[i].Embedding...)
 		/*factor := dot(iris2[i].Measures, iris2[i].Measures)
 		factor = math.Sqrt(factor)
 		for j := range iris2[i].Measures {
 			iris2[i].Measures[j] /= factor
 		}*/
 	}
-	cp52 := LearnEmbeddingIris(iris2, 5, 5, 64)
+	cp52 := LearnEmbeddingIris(iris2, 9, 5, 2*1024)
 	acc5 := make(map[string][4]int)
 	for i := range cp5 {
 		fmt.Println(cp5[i].Cluster, cp5[i].Label)
