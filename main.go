@@ -1155,28 +1155,8 @@ func LearnEmbeddingIris(iris []Fisher, size, width, iterations int) []Fisher {
 	return cp
 }
 
-var (
-	// FlagMarkov is the markov mode
-	FlagMarkov = flag.Bool("markov", false, "markov mode")
-	// FlagTree is the tree mode
-	FlagTree = flag.Bool("tree", false, "tree mode")
-	// FlagPrompt inference mode
-	FlagPrompt = flag.String("prompt", "", "inference mode")
-)
-
-func main() {
-	flag.Parse()
-
-	if *FlagMarkov {
-		MarkovMode()
-		return
-	}
-
-	if *FlagTree || *FlagPrompt != "" {
-		TreeMode()
-		return
-	}
-
+// ClusterMode is the iris clustering mode
+func ClusterMode() {
 	rng := rand.New(rand.NewSource(1))
 	iris := Load()
 	rng.Shuffle(len(iris), func(i, j int) {
@@ -1221,5 +1201,35 @@ func main() {
 	}
 	for i, v := range acc52 {
 		fmt.Println(i, v)
+	}
+}
+
+var (
+	// FlagMarkov is the markov mode
+	FlagMarkov = flag.Bool("markov", false, "markov mode")
+	// FlagTree is the tree mode
+	FlagTree = flag.Bool("tree", false, "tree mode")
+	// FlagCluster cluster mode
+	FlagCluster = flag.Bool("cluster", false, "cluster mode")
+	// FlagPrompt inference mode
+	FlagPrompt = flag.String("prompt", "", "inference mode")
+)
+
+func main() {
+	flag.Parse()
+
+	if *FlagMarkov {
+		MarkovMode()
+		return
+	}
+
+	if *FlagTree || *FlagPrompt != "" {
+		TreeMode()
+		return
+	}
+
+	if *FlagCluster {
+		ClusterMode()
+		return
 	}
 }
