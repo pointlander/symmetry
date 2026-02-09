@@ -1204,6 +1204,101 @@ func ClusterMode() {
 	}
 }
 
+// LearnEmbeddingBlock learns the embedding
+func LearnEmbeddingBlock(rng *rand.Rand, buffer []State) {
+	others := tf32.NewSet()
+	others.Add("x", Width+2, len(buffer))
+	x := others.ByName["x"]
+	for i := range buffer {
+		x.X = append(x.X, buffer[i].Image...)
+	}
+
+	set := tf32.NewSet()
+	set.Add("i", 2, len(buffer))
+
+	for ii := range set.Weights {
+		w := set.Weights[ii]
+		if strings.HasPrefix(w.N, "b") {
+			w.X = w.X[:cap(w.X)]
+			w.States = make([][]float32, StateTotal)
+			for ii := range w.States {
+				w.States[ii] = make([]float32, len(w.X))
+			}
+			continue
+		}
+		factor := math.Sqrt(2.0 / float64(w.S[0]))
+		for range cap(w.X) {
+			w.X = append(w.X, float32(rng.NormFloat64()*factor))
+		}
+		w.States = make([][]float32, StateTotal)
+		for ii := range w.States {
+			w.States[ii] = make([]float32, len(w.X))
+		}
+	}
+
+	drop := .3
+	dropout := map[string]interface{}{
+		"rng":  rng,
+		"drop": &drop,
+	}
+	sa := tf32.T(tf32.Mul(tf32.Dropout(tf32.Square(set.Get("i")), dropout), tf32.T(others.Get("x"))))
+	loss := tf32.Avg(tf32.Quadratic(others.Get("x"), sa))
+
+	for iteration := range 256 {
+		pow := func(x float32) float32 {
+			y := math.Pow(float64(x), float64(iteration+1))
+			if math.IsNaN(y) || math.IsInf(y, 0) {
+				return 0
+			}
+			return float32(y)
+		}
+
+		set.Zero()
+		others.Zero()
+		l := tf32.Gradient(loss).X[0]
+		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
+			fmt.Println(iteration, l)
+			return
+		}
+
+		norm := 0.0
+		for _, p := range set.Weights {
+			for _, d := range p.D {
+				norm += float64(d * d)
+			}
+		}
+		norm = math.Sqrt(norm)
+		b1, b2 := pow(B1), pow(B2)
+		scaling := 1.0
+		if norm > 1 {
+			scaling = 1 / norm
+		}
+		for _, w := range set.Weights {
+			for ii, d := range w.D {
+				g := d * float32(scaling)
+				m := B1*w.States[StateM][ii] + (1-B1)*g
+				v := B2*w.States[StateV][ii] + (1-B2)*g*g
+				w.States[StateM][ii] = m
+				w.States[StateV][ii] = v
+				mhat := m / (1 - b1)
+				vhat := v / (1 - b2)
+				if vhat < 0 {
+					vhat = 0
+				}
+				w.X[ii] -= Eta * mhat / (float32(math.Sqrt(float64(vhat))) + 1e-8)
+			}
+		}
+		//fmt.Println(iteration, l)
+	}
+
+	ii := set.ByName["i"]
+	for i := range ii.S[1] {
+		cp := make([]float32, ii.S[0])
+		copy(cp, ii.X[i*ii.S[0]:(i+1)*ii.S[0]])
+		buffer[i].Embedding = cp
+	}
+}
+
 var (
 	// FlagMarkov is the markov mode
 	FlagMarkov = flag.Bool("markov", false, "markov mode")
@@ -1231,5 +1326,53 @@ func main() {
 	if *FlagCluster {
 		ClusterMode()
 		return
+	}
+
+	books := LoadBooks()
+	book := books[1]
+	fmt.Println("length", len(book.Text))
+	embedding := NewEmbedding()
+	markov := Markov{}
+	var previous byte
+	for i, value := range book.Text[:len(book.Text)-1] {
+		markov.Iterate(value)
+		next := book.Text[i+1]
+		embedding.Set(markov, value, previous, next)
+		previous = value
+	}
+	for i := range embedding.Model {
+		for _, value := range embedding.Model[i] {
+			factor := tf32.Dot(value, value)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range value {
+				value[j] = count / factor
+			}
+		}
+	}
+	{
+		factor := tf32.Dot(embedding.Root, embedding.Root)
+		if factor > 0 {
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range embedding.Root {
+				embedding.Root[i] = count / factor
+			}
+		}
+	}
+
+	rng := rand.New(rand.NewSource(1))
+	buffer := make([]State, 16)
+	for i := range buffer {
+		buffer[i].Image = make([]float32, Width+2)
+	}
+	markov = Markov{}
+	markov.Iterate(book.Text[0])
+	image := embedding.Get(markov)
+	copy(buffer[0].Image, image)
+	LearnEmbeddingBlock(rng, buffer)
+	for i := range buffer {
+		fmt.Println(buffer[i].Embedding)
 	}
 }
