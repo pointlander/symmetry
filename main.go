@@ -1530,19 +1530,10 @@ func main() {
 		others.Zero()
 		copy(input.X, sum)
 		l1(func(a *tf32.V) bool {
-			sum := float32(0.0)
-			for _, value := range a.X {
-				if value < 0 {
-					value = -value
-				}
-				sum += value
-			}
+			softmax(a.X, .5)
 			total, selected := float32(0.0), rng.Float32()
 			for i, value := range a.X {
-				if value < 0 {
-					value = -value
-				}
-				total += value / sum
+				total += value
 				if selected < total {
 					symbol = byte(i)
 					break
@@ -1578,9 +1569,6 @@ func main() {
 			softmax(a.X, .5)
 			total, selected := float32(0.0), rng.Float32()
 			for i, value := range a.X {
-				if value < 0 {
-					value = -value
-				}
 				total += value
 				if selected < total {
 					symbol = byte(i)
