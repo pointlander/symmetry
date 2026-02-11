@@ -1204,17 +1204,22 @@ func ClusterMode() {
 	}
 }
 
+const (
+	// EmbeddingWidth embedding width
+	EmbeddingWidth = 5
+)
+
 // LearnEmbeddingBlock learns the embedding
 func LearnEmbeddingBlock(rng *rand.Rand, buffer []State) {
 	others := tf32.NewSet()
-	others.Add("x", Width+2, len(buffer))
+	others.Add("x", Width+EmbeddingWidth, len(buffer))
 	x := others.ByName["x"]
 	for i := range buffer {
 		x.X = append(x.X, buffer[i].Image...)
 	}
 
 	set := tf32.NewSet()
-	set.Add("i", 2, len(buffer))
+	set.Add("i", EmbeddingWidth, len(buffer))
 
 	for ii := range set.Weights {
 		w := set.Weights[ii]
@@ -1364,7 +1369,7 @@ func main() {
 
 	rng := rand.New(rand.NewSource(1))
 	set := tf32.NewSet()
-	set.Add("w0", 2, 32)
+	set.Add("w0", EmbeddingWidth, 32)
 	set.Add("b0", 32)
 	set.Add("w1", 64, 256)
 	set.Add("b1", 256)
@@ -1390,7 +1395,7 @@ func main() {
 	}
 
 	others := tf32.NewSet()
-	others.Add("input", 2)
+	others.Add("input", EmbeddingWidth)
 	others.Add("output", 256)
 	input := others.ByName["input"]
 	input.X = input.X[:cap(input.X)]
@@ -1403,15 +1408,15 @@ func main() {
 
 	buffer := make([]State, 16)
 	for i := range buffer {
-		buffer[i].Image = make([]float32, Width+2)
+		buffer[i].Image = make([]float32, Width+EmbeddingWidth)
 	}
 	markov = Markov{}
-	for iteration, value := range book.Text[:1024] {
+	for iteration, value := range book.Text[:4*1024] {
 		markov.Iterate(value)
 		image := embedding.Get(markov)
 		copy(buffer[0].Image, image)
 		LearnEmbeddingBlock(rng, buffer)
-		sum := make([]float32, 2)
+		sum := make([]float32, EmbeddingWidth)
 		for i := range buffer {
 			for j := range sum {
 				sum[j] += buffer[i].Embedding[j]
@@ -1468,5 +1473,89 @@ func main() {
 			}
 		}
 		fmt.Println(iteration, l)
+	}
+
+	markov = Markov{}
+	prompt := []byte("What is the meaning of life?")
+	out := []byte{}
+	symbol := byte(0)
+	for _, value := range prompt {
+		markov.Iterate(value)
+		image := embedding.Get(markov)
+		copy(buffer[0].Image, image)
+		LearnEmbeddingBlock(rng, buffer)
+		sum := make([]float32, EmbeddingWidth)
+		for i := range buffer {
+			for j := range sum {
+				sum[j] += buffer[i].Embedding[j]
+			}
+			copy(buffer[i].Image[Width:], buffer[i].Embedding)
+		}
+
+		set.Zero()
+		others.Zero()
+		copy(input.X, sum)
+		l1(func(a *tf32.V) bool {
+			sum := float32(0.0)
+			for _, value := range a.X {
+				if value < 0 {
+					value = -value
+				}
+				sum += value
+			}
+			total, selected := float32(0.0), rng.Float32()
+			for i, value := range a.X {
+				if value < 0 {
+					value = -value
+				}
+				total += value / sum
+				if selected < total {
+					symbol = byte(i)
+					break
+				}
+			}
+			return true
+		})
+		out = append(out, symbol)
+	}
+	fmt.Println(string(out))
+	for {
+		markov.Iterate(symbol)
+		image := embedding.Get(markov)
+		copy(buffer[0].Image, image)
+		LearnEmbeddingBlock(rng, buffer)
+		sum := make([]float32, EmbeddingWidth)
+		for i := range buffer {
+			for j := range sum {
+				sum[j] += buffer[i].Embedding[j]
+			}
+			copy(buffer[i].Image[Width:], buffer[i].Embedding)
+		}
+
+		set.Zero()
+		others.Zero()
+		copy(input.X, sum)
+		l1(func(a *tf32.V) bool {
+			sum := float32(0.0)
+			for _, value := range a.X {
+				if value < 0 {
+					value = -value
+				}
+				sum += value
+			}
+			total, selected := float32(0.0), rng.Float32()
+			for i, value := range a.X {
+				if value < 0 {
+					value = -value
+				}
+				total += value / sum
+				if selected < total {
+					symbol = byte(i)
+					break
+				}
+			}
+			return true
+		})
+		fmt.Printf("%c", symbol)
 	}
 }
