@@ -1304,6 +1304,30 @@ func LearnEmbeddingBlock(rng *rand.Rand, buffer []State) {
 	}
 }
 
+const (
+	// S is the scaling factor for the softmax
+	S = 1.0 - 1e38*math.SmallestNonzeroFloat32
+)
+
+func softmax(values []float32, T float32) {
+	max := float32(0.0)
+	for _, v := range values {
+		if v > max {
+			v /= T
+			max = v
+		}
+	}
+	s := max * S
+	sum := float32(0.0)
+	for j, value := range values {
+		values[j] = exp(value/T - s)
+		sum += values[j]
+	}
+	for j, value := range values {
+		values[j] = value / sum
+	}
+}
+
 var (
 	// FlagMarkov is the markov mode
 	FlagMarkov = flag.Bool("markov", false, "markov mode")
@@ -1551,19 +1575,13 @@ func main() {
 		others.Zero()
 		copy(input.X, sum)
 		l1(func(a *tf32.V) bool {
-			sum := float32(0.0)
-			for _, value := range a.X {
-				if value < 0 {
-					value = -value
-				}
-				sum += value
-			}
+			softmax(a.X, .5)
 			total, selected := float32(0.0), rng.Float32()
 			for i, value := range a.X {
 				if value < 0 {
 					value = -value
 				}
-				total += value / sum
+				total += value
 				if selected < total {
 					symbol = byte(i)
 					break
