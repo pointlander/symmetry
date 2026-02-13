@@ -1523,6 +1523,11 @@ func main() {
 			for j := range sum {
 				sum[j] += buffer[i].Embedding[j]
 			}
+			factor := tf32.Dot(buffer[i].Embedding, buffer[i].Embedding)
+			factor = float32(math.Sqrt(float64(factor)))
+			for j := range buffer[i].Embedding {
+				buffer[i].Embedding[j] /= factor
+			}
 			copy(buffer[i].Image[Width:], buffer[i].Embedding)
 		}
 		factor := tf32.Dot(sum, sum)
@@ -1558,6 +1563,11 @@ func main() {
 		for i := range buffer {
 			for j := range sum {
 				sum[j] += buffer[i].Embedding[j]
+			}
+			factor := tf32.Dot(buffer[i].Embedding, buffer[i].Embedding)
+			factor = float32(math.Sqrt(float64(factor)))
+			for j := range buffer[i].Embedding {
+				buffer[i].Embedding[j] /= factor
 			}
 			copy(buffer[i].Image[Width:], buffer[i].Embedding)
 		}
