@@ -1427,7 +1427,7 @@ func main() {
 	output.X = output.X[:cap(output.X)]
 
 	l0 := tf32.Everett(tf32.Add(tf32.Mul(set.Get("w0"), others.Get("input")), set.Get("b0")))
-	l1 := tf32.Add(tf32.Mul(set.Get("w1"), l0), set.Get("b1"))
+	l1 := tf32.Sigmoid(tf32.Add(tf32.Mul(set.Get("w1"), l0), set.Get("b1")))
 	loss := tf32.Quadratic(l1, others.Get("output"))
 
 	buffer := make([]State, 16)
