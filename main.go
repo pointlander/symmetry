@@ -148,7 +148,7 @@ const (
 )
 
 // LearnEmbedding learns the embedding
-func LearnEmbedding(rng *rand.Rand, buffer []State) float32 {
+func LearnEmbedding(iterations int, rng *rand.Rand, buffer []State) float32 {
 	others := tf32.NewSet()
 	others.Add("x", Width, len(buffer))
 	x := others.ByName["x"]
@@ -187,7 +187,7 @@ func LearnEmbedding(rng *rand.Rand, buffer []State) float32 {
 	sa := tf32.T(tf32.Mul(tf32.Dropout(tf32.Square(set.Get("i")), dropout), tf32.T(others.Get("x"))))
 	loss := tf32.Avg(tf32.Quadratic(others.Get("x"), sa))
 
-	for iteration := range 256 {
+	for iteration := range iterations {
 		pow := func(x float32) float32 {
 			y := math.Pow(float64(x), float64(iteration+1))
 			if math.IsNaN(y) || math.IsInf(y, 0) {
@@ -499,7 +499,7 @@ func MarkovMode() {
 			buffer[i].Image = embedding
 			buffer[i].Symbol = symbol
 		}
-		LearnEmbedding(rng, buffer)
+		LearnEmbedding(256, rng, buffer)
 		for i := range buffer {
 			model.Set(save, buffer[i])
 			save.Iterate(buffer[i].Symbol)
@@ -518,9 +518,9 @@ func MarkovMode() {
 		}
 		var current []float32
 		for {
-			//LearnEmbedding(rng, buffer)
+			//LearnEmbedding(256, rng, buffer)
 			if current == nil {
-				LearnEmbedding(rng, buffer)
+				LearnEmbedding(256, rng, buffer)
 				current = make([]float32, EmbeddingSize)
 				copy(current, buffer[0].Embedding)
 				for _, entry := range buffer {
@@ -818,7 +818,7 @@ func TreeMode() {
 			buffer[i].Symbol = symbol
 		}
 		var current []float32
-		LearnEmbedding(rng, buffer)
+		LearnEmbedding(256, rng, buffer)
 		current = make([]float32, EmbeddingSize)
 		copy(current, buffer[0].Embedding)
 		for _, entry := range buffer {
@@ -913,7 +913,7 @@ func TreeMode() {
 			buffer[i].Image = embedding
 			buffer[i].Symbol = symbol
 		}
-		LearnEmbedding(rng, buffer)
+		LearnEmbedding(256, rng, buffer)
 		for i := range buffer {
 			tree[0].Shards = append(tree[0].Shards, buffer[i].Shard)
 			for j := range tree {
@@ -1701,7 +1701,7 @@ func main() {
 				Image: embedding.Get(markov),
 			})
 		}
-		s := LearnEmbedding(rng, buffer)
+		s := LearnEmbedding(512, rng, buffer)
 		results = append(results, Result{
 			Value: prompt,
 			S:     s,
