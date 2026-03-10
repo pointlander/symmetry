@@ -326,6 +326,20 @@ func (m *Embedding) Set(markov Markov, entry, previous, next byte) {
 	m.Root[entry]++
 }
 
+// SetNext sets an entry
+func (m *Embedding) SetNext(markov Markov, entry, next byte) {
+	for i := range Order {
+		bucket := m.Model[i][markov]
+		if bucket == nil {
+			bucket = make([]float32, 256)
+		}
+		bucket[next]++
+		m.Model[i][markov] = bucket
+		markov[i] = 0
+	}
+	m.Root[entry]++
+}
+
 // Get gets an entry
 func (m *Embedding) Get(markov Markov) []float32 {
 	for i := range Order {
@@ -1609,5 +1623,61 @@ func main() {
 	if *FlagBlock {
 		BlockMode()
 		return
+	}
+
+	rng := rand.New(rand.NewSource(1))
+
+	books := LoadBooks()
+	book := books[1]
+	fmt.Println("length", len(book.Text))
+	embedding := NewEmbedding()
+	markov := Markov{}
+	for i, value := range book.Text[:len(book.Text)-1] {
+		markov.Iterate(value)
+		embedding.SetNext(markov, value, book.Text[i+1])
+	}
+	for i := range embedding.Model {
+		for _, value := range embedding.Model[i] {
+			factor := tf32.Dot(value, value)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range value {
+				value[j] = count / factor
+			}
+		}
+	}
+	{
+		factor := tf32.Dot(embedding.Root, embedding.Root)
+		if factor > 0 {
+			factor = float32(math.Sqrt(float64(factor)))
+			for i, count := range embedding.Root {
+				embedding.Root[i] = count / factor
+			}
+		}
+	}
+
+	markov = Markov{}
+	prompt := []byte("What is the meaning of life?")
+	for _, value := range prompt {
+		markov.Iterate(value)
+	}
+	for range 33 {
+		distribution := embedding.Get(markov)
+		sum := float32(0.0)
+		for _, value := range distribution {
+			sum += value
+		}
+		total, selected, index := float32(0.0), rng.Float32(), 0
+		for i, value := range distribution {
+			total += value / sum
+			if selected < total {
+				index = i
+				break
+			}
+		}
+		fmt.Printf("%c", byte(index))
+		markov.Iterate(byte(index))
 	}
 }
