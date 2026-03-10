@@ -1334,35 +1334,8 @@ func softmax(values []float32, T float32) {
 	}
 }
 
-var (
-	// FlagMarkov is the markov mode
-	FlagMarkov = flag.Bool("markov", false, "markov mode")
-	// FlagTree is the tree mode
-	FlagTree = flag.Bool("tree", false, "tree mode")
-	// FlagCluster cluster mode
-	FlagCluster = flag.Bool("cluster", false, "cluster mode")
-	// FlagPrompt inference mode
-	FlagPrompt = flag.String("prompt", "", "inference mode")
-)
-
-func main() {
-	flag.Parse()
-
-	if *FlagMarkov {
-		MarkovMode()
-		return
-	}
-
-	if *FlagTree || *FlagPrompt != "" {
-		TreeMode()
-		return
-	}
-
-	if *FlagCluster {
-		ClusterMode()
-		return
-	}
-
+// BlockMode block mode
+func BlockMode() {
 	books := LoadBooks()
 	book := books[1]
 	fmt.Println("length", len(book.Text))
@@ -1599,5 +1572,42 @@ func main() {
 			return true
 		})
 		fmt.Printf("%c", symbol)
+	}
+}
+
+var (
+	// FlagMarkov is the markov mode
+	FlagMarkov = flag.Bool("markov", false, "markov mode")
+	// FlagTree is the tree mode
+	FlagTree = flag.Bool("tree", false, "tree mode")
+	// FlagCluster cluster mode
+	FlagCluster = flag.Bool("cluster", false, "cluster mode")
+	// FlagPrompt inference mode
+	FlagPrompt = flag.String("prompt", "", "inference mode")
+	// FlagBlock
+	FlagBlock = flag.Bool("block", false, "block mode")
+)
+
+func main() {
+	flag.Parse()
+
+	if *FlagMarkov {
+		MarkovMode()
+		return
+	}
+
+	if *FlagTree || *FlagPrompt != "" {
+		TreeMode()
+		return
+	}
+
+	if *FlagCluster {
+		ClusterMode()
+		return
+	}
+
+	if *FlagBlock {
+		BlockMode()
+		return
 	}
 }
