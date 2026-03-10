@@ -1099,12 +1099,12 @@ func LearnEmbeddingIris(iris []Fisher, size, width, iterations int) []Fisher {
 					vhat = 0
 				}
 				_ = mhat
-				// w.X[ii] -= Eta * mhat / (math.Sqrt(vhat) + 1e-8)
-				if rng.Float64() > .01 {
+				w.X[ii] -= Eta * mhat / (math.Sqrt(vhat) + 1e-8)
+				/*if rng.Float64() > .01 {
 					w.X[ii] -= .05 * g
 				} else {
 					w.X[ii] += .05 * g
-				}
+				}*/
 			}
 		}
 		fmt.Println(l)
