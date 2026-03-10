@@ -148,7 +148,7 @@ const (
 )
 
 // LearnEmbedding learns the embedding
-func LearnEmbedding(rng *rand.Rand, buffer []State) {
+func LearnEmbedding(rng *rand.Rand, buffer []State) float32 {
 	others := tf32.NewSet()
 	others.Add("x", Width, len(buffer))
 	x := others.ByName["x"]
@@ -201,7 +201,7 @@ func LearnEmbedding(rng *rand.Rand, buffer []State) {
 		l := tf32.Gradient(loss).X[0]
 		if math.IsNaN(float64(l)) || math.IsInf(float64(l), 0) {
 			fmt.Println(iteration, l)
-			return
+			return l
 		}
 
 		norm := 0.0
@@ -239,6 +239,14 @@ func LearnEmbedding(rng *rand.Rand, buffer []State) {
 		cp := make([]float32, ii.S[0])
 		copy(cp, ii.X[i*ii.S[0]:(i+1)*ii.S[0]])
 		buffer[i].Embedding = cp
+	}
+
+	{
+		sa := tf32.T(tf32.Mul(tf32.Square(set.Get("i")), tf32.T(others.Get("x"))))
+		loss := tf32.Avg(tf32.Quadratic(others.Get("x"), sa))
+		set.Zero()
+		others.Zero()
+		return tf32.Gradient(loss).X[0]
 	}
 }
 
@@ -1628,7 +1636,7 @@ func main() {
 	rng := rand.New(rand.NewSource(1))
 
 	books := LoadBooks()
-	book := books[1]
+	book := books[4]
 	fmt.Println("length", len(book.Text))
 	embedding := NewEmbedding()
 	markov := Markov{}
@@ -1658,26 +1666,51 @@ func main() {
 		}
 	}
 
-	markov = Markov{}
-	prompt := []byte("What is the meaning of life?")
-	for _, value := range prompt {
-		markov.Iterate(value)
+	type Result struct {
+		Value []byte
+		S     float32
 	}
-	for range 33 {
-		distribution := embedding.Get(markov)
-		sum := float32(0.0)
-		for _, value := range distribution {
-			sum += value
+	results := make([]Result, 0, 127)
+	for range 256 {
+		markov = Markov{}
+		buffer := make([]State, 0, 8)
+		prompt := []byte("What is the meaning of life?")
+		for _, value := range prompt {
+			markov.Iterate(value)
+			buffer = append(buffer, State{
+				Image: embedding.Get(markov),
+			})
 		}
-		total, selected, index := float32(0.0), rng.Float32(), 0
-		for i, value := range distribution {
-			total += value / sum
-			if selected < total {
-				index = i
-				break
+		for range 33 {
+			distribution := embedding.Get(markov)
+			sum := float32(0.0)
+			for _, value := range distribution {
+				sum += value
 			}
+			total, selected, index := float32(0.0), rng.Float32(), 0
+			for i, value := range distribution {
+				total += value / sum
+				if selected < total {
+					index = i
+					break
+				}
+			}
+			prompt = append(prompt, byte(index))
+			markov.Iterate(byte(index))
+			buffer = append(buffer, State{
+				Image: embedding.Get(markov),
+			})
 		}
-		fmt.Printf("%c", byte(index))
-		markov.Iterate(byte(index))
+		s := LearnEmbedding(rng, buffer)
+		results = append(results, Result{
+			Value: prompt,
+			S:     s,
+		})
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].S > results[j].S
+	})
+	for _, value := range results {
+		fmt.Println(value.S, string(value.Value))
 	}
 }
