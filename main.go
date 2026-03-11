@@ -342,7 +342,7 @@ func (m *Embedding) Set(markov Markov, entry, previous, next byte) {
 }
 
 // SetNext sets an entry
-func (m *Embedding) SetNext(markov Markov, entry, next, next2 byte) {
+func (m *Embedding) SetNext(markov Markov, previous, entry, next byte) {
 	for i := range Order {
 		bucket := m.Model[i][markov]
 		if bucket.N == nil {
@@ -350,7 +350,8 @@ func (m *Embedding) SetNext(markov Markov, entry, next, next2 byte) {
 			bucket.N2 = make([]float32, 256)
 		}
 		bucket.N[next]++
-		bucket.N2[next2]++
+		bucket.N2[next]++
+		bucket.N2[previous]++
 		m.Model[i][markov] = bucket
 		markov[i] = 0
 	}
@@ -1661,39 +1662,47 @@ func main() {
 	for _, book := range books {
 		fmt.Println("length", len(book.Text))
 		markov := Markov{}
-		for i, value := range book.Text[:len(book.Text)-2] {
+		previous := byte(0.0)
+		for i, value := range book.Text[:len(book.Text)-1] {
 			markov.Iterate(value)
-			embedding.SetNext(markov, value, book.Text[i+1], book.Text[i+2])
+			embedding.SetNext(markov, previous, value, book.Text[i+1])
+			previous = value
 		}
 	}
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value.N, value.N)
-			if factor <= 0 {
+			sum := float32(0.0)
+			for _, value := range value.N {
+				sum += value
+			}
+			if sum == 0 {
 				continue
 			}
-			factor = float32(math.Sqrt(float64(factor)))
 			for j, count := range value.N {
-				value.N[j] = count / factor
+				value.N[j] = count / sum
 			}
 		}
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value.N2, value.N2)
-			if factor <= 0 {
+			sum := float32(0.0)
+			for _, value := range value.N2 {
+				sum += value
+			}
+			if sum == 0 {
 				continue
 			}
-			factor = float32(math.Sqrt(float64(factor)))
 			for j, count := range value.N2 {
-				value.N2[j] = count / factor
+				value.N2[j] = count / sum
 			}
 		}
 	}
 	{
-		factor := tf32.Dot(embedding.Root, embedding.Root)
-		if factor > 0 {
-			factor = float32(math.Sqrt(float64(factor)))
+		sum := float32(0.0)
+		for _, value := range embedding.Root {
+			sum += value
+		}
+		if sum > 0 {
 			for i, count := range embedding.Root {
-				embedding.Root[i] = count / factor
+				embedding.Root[i] = count / sum
 			}
 		}
 	}
@@ -1707,62 +1716,19 @@ func main() {
 		markov := Markov{}
 		buffer := make([]State, 0, 8)
 		prompt := []byte("What is the meaning of life?")
-		context := make([]float32, 256)
 		for _, value := range prompt {
-			e := embedding.Get(markov)
-			next := embedding.Get2(markov)
-			sume, sumnext := float32(0.0), float32(0.0)
-			for i := range context {
-				sume += e[i]
-				sumnext += context[i]
-			}
-			if sume == 0 {
-				sume = 1
-			}
-			if sumnext == 0 {
-				sumnext = 1
-			}
-			for i := range context {
-				context[i] = e[i]
-			}
-			sum := float32(0.0)
-			for _, value := range context {
-				sum += value
-			}
-			for i, value := range context {
-				context[i] = value / sum
-			}
+			embed := embedding.Get2(markov)
 			markov.Iterate(value)
 			buffer = append(buffer, State{
-				Image: context,
+				Image: embed,
 			})
-			context = make([]float32, 256)
-			copy(context, next)
 		}
 		for range 33 {
-			e := embedding.Get(markov)
-			next := embedding.Get2(markov)
-			sume, sumnext := float32(0.0), float32(0.0)
-			for i := range context {
-				sume += e[i]
-				sumnext += context[i]
-			}
-			if sume == 0 {
-				sume = 1
-			}
-			if sumnext == 0 {
-				sumnext = 1
-			}
-			for i := range context {
-				context[i] = e[i]
-			}
-			sum := float32(0.0)
-			for _, value := range context {
-				sum += value
-			}
+			distribution := embedding.Get(markov)
+			embed := embedding.Get2(markov)
 			total, selected, index := float32(0.0), rng.Float32(), 0
-			for i, value := range context {
-				total += value / sum
+			for i, value := range distribution {
+				total += value
 				if selected < total {
 					index = i
 					break
@@ -1771,10 +1737,8 @@ func main() {
 			prompt = append(prompt, byte(index))
 			markov.Iterate(byte(index))
 			buffer = append(buffer, State{
-				Image: context,
+				Image: embed,
 			})
-			context = make([]float32, 256)
-			copy(context, next)
 		}
 		LearnEmbedding(512, rng, buffer)
 		s := float32(0.0)
