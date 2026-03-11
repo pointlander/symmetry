@@ -61,8 +61,8 @@ type Book struct {
 // LoadBooks loads books
 func LoadBooks() []Book {
 	books := []Book{
-		{Name: "pg74.txt.bz2"},
 		{Name: "10.txt.utf-8.bz2"},
+		{Name: "pg74.txt.bz2"},
 		{Name: "76.txt.utf-8.bz2"},
 		{Name: "84.txt.utf-8.bz2"},
 		{Name: "100.txt.utf-8.bz2"},
