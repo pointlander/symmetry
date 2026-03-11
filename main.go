@@ -1711,16 +1711,26 @@ func main() {
 		for _, value := range prompt {
 			e := embedding.Get(markov)
 			next := embedding.Get2(markov)
+			sume, sumnext := float32(0.0), float32(0.0)
 			for i := range context {
-				context[i] = context[i]/8 + e[i]
+				sume += e[i]
+				sumnext += context[i]
 			}
-			factor := tf32.Dot(context, context)
-			if factor <= 0 {
-				continue
+			if sume == 0 {
+				sume = 1
 			}
-			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range context {
-				context[j] = count / factor
+			if sumnext == 0 {
+				sumnext = 1
+			}
+			for i := range context {
+				context[i] = e[i]
+			}
+			sum := float32(0.0)
+			for _, value := range context {
+				sum += value
+			}
+			for i, value := range context {
+				context[i] = value / sum
 			}
 			markov.Iterate(value)
 			buffer = append(buffer, State{
@@ -1732,20 +1742,27 @@ func main() {
 		for range 33 {
 			e := embedding.Get(markov)
 			next := embedding.Get2(markov)
+			sume, sumnext := float32(0.0), float32(0.0)
 			for i := range context {
-				context[i] = context[i]/8 + e[i]
+				sume += e[i]
+				sumnext += context[i]
 			}
-			factor := tf32.Dot(context, context)
-			if factor <= 0 {
-				continue
+			if sume == 0 {
+				sume = 1
 			}
-			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range context {
-				context[j] = count / factor
+			if sumnext == 0 {
+				sumnext = 1
+			}
+			for i := range context {
+				context[i] = e[i]
+			}
+			sum := float32(0.0)
+			for _, value := range context {
+				sum += value
 			}
 			total, selected, index := float32(0.0), rng.Float32(), 0
 			for i, value := range context {
-				total += value
+				total += value / sum
 				if selected < total {
 					index = i
 					break
