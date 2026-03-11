@@ -369,6 +369,18 @@ func (m *Embedding) Get(markov Markov) []float32 {
 	return m.Root
 }
 
+// Get gets an entry
+func (m *Embedding) Get2(markov Markov) []float32 {
+	for i := range Order {
+		bucket := m.Model[i][markov]
+		if bucket.N2 != nil {
+			return bucket.N2
+		}
+		markov[i] = 0
+	}
+	return m.Root
+}
+
 func cs(a, b []float32) float32 {
 	ab := tf32.Dot(a, b)
 	aa := tf32.Dot(a, a)
@@ -1665,6 +1677,16 @@ func main() {
 				value.N[j] = count / factor
 			}
 		}
+		for _, value := range embedding.Model[i] {
+			factor := tf32.Dot(value.N2, value.N2)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range value.N2 {
+				value.N2[j] = count / factor
+			}
+		}
 	}
 	{
 		factor := tf32.Dot(embedding.Root, embedding.Root)
@@ -1685,21 +1707,45 @@ func main() {
 		markov := Markov{}
 		buffer := make([]State, 0, 8)
 		prompt := []byte("What is the meaning of life?")
+		context := make([]float32, 256)
 		for _, value := range prompt {
+			e := embedding.Get(markov)
+			next := embedding.Get2(markov)
+			for i := range context {
+				context[i] = context[i]/8 + e[i]
+			}
+			factor := tf32.Dot(context, context)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range context {
+				context[j] = count / factor
+			}
 			markov.Iterate(value)
 			buffer = append(buffer, State{
-				Image: embedding.Get(markov),
+				Image: context,
 			})
+			context = make([]float32, 256)
+			copy(context, next)
 		}
 		for range 33 {
-			distribution := embedding.Get(markov)
-			sum := float32(0.0)
-			for _, value := range distribution {
-				sum += value
+			e := embedding.Get(markov)
+			next := embedding.Get2(markov)
+			for i := range context {
+				context[i] = context[i]/8 + e[i]
+			}
+			factor := tf32.Dot(context, context)
+			if factor <= 0 {
+				continue
+			}
+			factor = float32(math.Sqrt(float64(factor)))
+			for j, count := range context {
+				context[j] = count / factor
 			}
 			total, selected, index := float32(0.0), rng.Float32(), 0
-			for i, value := range distribution {
-				total += value / sum
+			for i, value := range context {
+				total += value
 				if selected < total {
 					index = i
 					break
@@ -1708,8 +1754,10 @@ func main() {
 			prompt = append(prompt, byte(index))
 			markov.Iterate(byte(index))
 			buffer = append(buffer, State{
-				Image: embedding.Get(markov),
+				Image: context,
 			})
+			context = make([]float32, 256)
+			copy(context, next)
 		}
 		LearnEmbedding(512, rng, buffer)
 		s := float32(0.0)
