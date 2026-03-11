@@ -304,16 +304,22 @@ func (m *Model) Get(markov Markov) Bucket {
 	return m.Root
 }
 
+// Bucket is a markov bucket
+type Entry struct {
+	N  []float32
+	N2 []float32
+}
+
 // Embedding is a markov model
 type Embedding struct {
-	Model [Order]map[Markov][]float32
+	Model [Order]map[Markov]Entry
 	Root  []float32
 }
 
 // NewEmbedding creates a new model
 func NewEmbedding() (model Embedding) {
 	for i := range Order {
-		model.Model[i] = make(map[Markov][]float32)
+		model.Model[i] = make(map[Markov]Entry)
 	}
 	model.Root = make([]float32, 256)
 	return model
@@ -323,11 +329,12 @@ func NewEmbedding() (model Embedding) {
 func (m *Embedding) Set(markov Markov, entry, previous, next byte) {
 	for i := range Order {
 		bucket := m.Model[i][markov]
-		if bucket == nil {
-			bucket = make([]float32, 256)
+		if bucket.N == nil {
+			bucket.N = make([]float32, 256)
+			bucket.N2 = make([]float32, 256)
 		}
-		bucket[previous]++
-		bucket[next]++
+		bucket.N[previous]++
+		bucket.N[next]++
 		m.Model[i][markov] = bucket
 		markov[i] = 0
 	}
@@ -335,13 +342,15 @@ func (m *Embedding) Set(markov Markov, entry, previous, next byte) {
 }
 
 // SetNext sets an entry
-func (m *Embedding) SetNext(markov Markov, entry, next byte) {
+func (m *Embedding) SetNext(markov Markov, entry, next, next2 byte) {
 	for i := range Order {
 		bucket := m.Model[i][markov]
-		if bucket == nil {
-			bucket = make([]float32, 256)
+		if bucket.N == nil {
+			bucket.N = make([]float32, 256)
+			bucket.N2 = make([]float32, 256)
 		}
-		bucket[next]++
+		bucket.N[next]++
+		bucket.N2[next2]++
 		m.Model[i][markov] = bucket
 		markov[i] = 0
 	}
@@ -352,8 +361,8 @@ func (m *Embedding) SetNext(markov Markov, entry, next byte) {
 func (m *Embedding) Get(markov Markov) []float32 {
 	for i := range Order {
 		bucket := m.Model[i][markov]
-		if bucket != nil {
-			return bucket
+		if bucket.N != nil {
+			return bucket.N
 		}
 		markov[i] = 0
 	}
@@ -468,13 +477,13 @@ func MarkovMode() {
 	rng := rand.New(rand.NewSource(1))
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value, value)
+			factor := tf32.Dot(value.N, value.N)
 			if factor <= 0 {
 				continue
 			}
 			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range value {
-				value[j] = count / factor
+			for j, count := range value.N {
+				value.N[j] = count / factor
 			}
 		}
 	}
@@ -787,13 +796,13 @@ func TreeMode() {
 	rng := rand.New(rand.NewSource(1))
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value, value)
+			factor := tf32.Dot(value.N, value.N)
 			if factor <= 0 {
 				continue
 			}
 			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range value {
-				value[j] = count / factor
+			for j, count := range value.N {
+				value.N[j] = count / factor
 			}
 		}
 	}
@@ -1372,13 +1381,13 @@ func BlockMode() {
 	}
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value, value)
+			factor := tf32.Dot(value.N, value.N)
 			if factor <= 0 {
 				continue
 			}
 			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range value {
-				value[j] = count / factor
+			for j, count := range value.N {
+				value.N[j] = count / factor
 			}
 		}
 	}
@@ -1640,20 +1649,20 @@ func main() {
 	for _, book := range books {
 		fmt.Println("length", len(book.Text))
 		markov := Markov{}
-		for i, value := range book.Text[:len(book.Text)-1] {
+		for i, value := range book.Text[:len(book.Text)-2] {
 			markov.Iterate(value)
-			embedding.SetNext(markov, value, book.Text[i+1])
+			embedding.SetNext(markov, value, book.Text[i+1], book.Text[i+2])
 		}
 	}
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
-			factor := tf32.Dot(value, value)
+			factor := tf32.Dot(value.N, value.N)
 			if factor <= 0 {
 				continue
 			}
 			factor = float32(math.Sqrt(float64(factor)))
-			for j, count := range value {
-				value[j] = count / factor
+			for j, count := range value.N {
+				value.N[j] = count / factor
 			}
 		}
 	}
