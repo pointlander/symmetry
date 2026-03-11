@@ -1636,13 +1636,14 @@ func main() {
 	rng := rand.New(rand.NewSource(1))
 
 	books := LoadBooks()
-	book := books[4]
-	fmt.Println("length", len(book.Text))
 	embedding := NewEmbedding()
-	markov := Markov{}
-	for i, value := range book.Text[:len(book.Text)-1] {
-		markov.Iterate(value)
-		embedding.SetNext(markov, value, book.Text[i+1])
+	for _, book := range books {
+		fmt.Println("length", len(book.Text))
+		markov := Markov{}
+		for i, value := range book.Text[:len(book.Text)-1] {
+			markov.Iterate(value)
+			embedding.SetNext(markov, value, book.Text[i+1])
+		}
 	}
 	for i := range embedding.Model {
 		for _, value := range embedding.Model[i] {
@@ -1672,7 +1673,7 @@ func main() {
 	}
 	results := make([]Result, 0, 127)
 	for range 256 {
-		markov = Markov{}
+		markov := Markov{}
 		buffer := make([]State, 0, 8)
 		prompt := []byte("What is the meaning of life?")
 		for _, value := range prompt {
