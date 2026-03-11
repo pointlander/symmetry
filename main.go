@@ -1701,7 +1701,22 @@ func main() {
 				Image: embedding.Get(markov),
 			})
 		}
-		s := LearnEmbedding(512, rng, buffer)
+		LearnEmbedding(512, rng, buffer)
+		s := float32(0.0)
+		for i := range EmbeddingSize {
+			sum := float32(0.0)
+			for j := range buffer {
+				sum += buffer[j].Embedding[i]
+			}
+			avg := sum / float32(len(buffer))
+			variance := float32(0.0)
+			for j := range buffer {
+				diff := buffer[j].Embedding[i] - avg
+				variance += diff * diff
+			}
+			variance /= float32(len(buffer))
+			s += float32(math.Sqrt(float64(variance)))
+		}
 		results = append(results, Result{
 			Value: prompt,
 			S:     s,
