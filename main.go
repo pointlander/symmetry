@@ -318,12 +318,13 @@ func (m *Model) Get(markov Markov) Bucket {
 type Entry struct {
 	N  []float32
 	N2 []float32
+	C  int
 }
 
 // Embedding is a markov model
 type Embedding struct {
 	Model [Order]map[Markov]Entry
-	Root  []float32
+	Root  Entry
 }
 
 // NewEmbedding creates a new model
@@ -331,7 +332,8 @@ func NewEmbedding() (model Embedding) {
 	for i := range Order {
 		model.Model[i] = make(map[Markov]Entry)
 	}
-	model.Root = make([]float32, 256)
+	model.Root.N = make([]float32, 256)
+	model.Root.N2 = make([]float32, 256)
 	return model
 }
 
@@ -348,7 +350,8 @@ func (m *Embedding) Set(markov Markov, entry, previous, next byte) {
 		m.Model[i][markov] = bucket
 		markov[i] = 0
 	}
-	m.Root[entry]++
+	m.Root.N[next]++
+	m.Root.C++
 }
 
 // SetNext sets an entry
@@ -362,30 +365,22 @@ func (m *Embedding) SetNext(markov Markov, previous, entry, next byte) {
 		bucket.N[next]++
 		bucket.N2[next]++
 		bucket.N2[previous]++
+		bucket.C++
 		m.Model[i][markov] = bucket
 		markov[i] = 0
 	}
-	m.Root[entry]++
+	m.Root.N[next]++
+	m.Root.N2[next]++
+	m.Root.N2[previous]++
+	m.Root.C++
 }
 
 // Get gets an entry
-func (m *Embedding) Get(markov Markov) []float32 {
+func (m *Embedding) Get(markov Markov) Entry {
 	for i := range Order {
 		bucket := m.Model[i][markov]
-		if bucket.N != nil {
-			return bucket.N
-		}
-		markov[i] = 0
-	}
-	return m.Root
-}
-
-// Get gets an entry
-func (m *Embedding) Get2(markov Markov) []float32 {
-	for i := range Order {
-		bucket := m.Model[i][markov]
-		if bucket.N2 != nil {
-			return bucket.N2
+		if bucket.N != nil && bucket.C >= 256 {
+			return bucket
 		}
 		markov[i] = 0
 	}
@@ -511,11 +506,11 @@ func MarkovMode() {
 		}
 	}
 	{
-		factor := tf32.Dot(embedding.Root, embedding.Root)
+		factor := tf32.Dot(embedding.Root.N, embedding.Root.N)
 		if factor > 0 {
 			factor = float32(math.Sqrt(float64(factor)))
-			for i, count := range embedding.Root {
-				embedding.Root[i] = count / factor
+			for i, count := range embedding.Root.N {
+				embedding.Root.N[i] = count / factor
 			}
 		}
 	}
@@ -528,7 +523,7 @@ func MarkovMode() {
 		for i, symbol := range book.Text[128*block : 128*block+128] {
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
-			buffer[i].Image = embedding
+			buffer[i].Image = embedding.N
 			buffer[i].Symbol = symbol
 		}
 		LearnEmbedding(256, rng, buffer)
@@ -545,7 +540,7 @@ func MarkovMode() {
 		for i, symbol := range prompt {
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
-			buffer[i].Image = embedding
+			buffer[i].Image = embedding.N
 			buffer[i].Symbol = symbol
 		}
 		var current []float32
@@ -830,11 +825,11 @@ func TreeMode() {
 		}
 	}
 	{
-		factor := tf32.Dot(embedding.Root, embedding.Root)
+		factor := tf32.Dot(embedding.Root.N, embedding.Root.N)
 		if factor > 0 {
 			factor = float32(math.Sqrt(float64(factor)))
-			for i, count := range embedding.Root {
-				embedding.Root[i] = count / factor
+			for i, count := range embedding.Root.N {
+				embedding.Root.N[i] = count / factor
 			}
 		}
 	}
@@ -846,7 +841,7 @@ func TreeMode() {
 		for i, symbol := range prompt {
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
-			buffer[i].Image = embedding
+			buffer[i].Image = embedding.N
 			buffer[i].Symbol = symbol
 		}
 		var current []float32
@@ -942,7 +937,7 @@ func TreeMode() {
 		for i, symbol := range book.Text[128*block : 128*block+128] {
 			markov.Iterate(symbol)
 			embedding := embedding.Get(markov)
-			buffer[i].Image = embedding
+			buffer[i].Image = embedding.N
 			buffer[i].Symbol = symbol
 		}
 		LearnEmbedding(256, rng, buffer)
@@ -1415,11 +1410,11 @@ func BlockMode() {
 		}
 	}
 	{
-		factor := tf32.Dot(embedding.Root, embedding.Root)
+		factor := tf32.Dot(embedding.Root.N, embedding.Root.N)
 		if factor > 0 {
 			factor = float32(math.Sqrt(float64(factor)))
-			for i, count := range embedding.Root {
-				embedding.Root[i] = count / factor
+			for i, count := range embedding.Root.N {
+				embedding.Root.N[i] = count / factor
 			}
 		}
 	}
@@ -1471,7 +1466,7 @@ func BlockMode() {
 	for iteration, value := range book.Text[:4*1024] {
 		markov.Iterate(value)
 		image := embedding.Get(markov)
-		copy(buffer[0].Image, image)
+		copy(buffer[0].Image, image.N)
 		LearnEmbeddingBlock(rng, buffer)
 		sum := make([]float32, EmbeddingWidth)
 		for i := range buffer {
@@ -1549,7 +1544,7 @@ func BlockMode() {
 	for _, value := range prompt {
 		markov.Iterate(value)
 		image := embedding.Get(markov)
-		copy(buffer[0].Image, image)
+		copy(buffer[0].Image, image.N)
 		LearnEmbeddingBlock(rng, buffer)
 		sum := make([]float32, EmbeddingWidth)
 		for i := range buffer {
@@ -1590,7 +1585,7 @@ func BlockMode() {
 	for {
 		markov.Iterate(symbol)
 		image := embedding.Get(markov)
-		copy(buffer[0].Image, image)
+		copy(buffer[0].Image, image.N)
 		LearnEmbeddingBlock(rng, buffer)
 		sum := make([]float32, EmbeddingWidth)
 		for i := range buffer {
@@ -1707,12 +1702,23 @@ func main() {
 	}
 	{
 		sum := float32(0.0)
-		for _, value := range embedding.Root {
+		for _, value := range embedding.Root.N {
 			sum += value
 		}
 		if sum > 0 {
-			for i, count := range embedding.Root {
-				embedding.Root[i] = count / sum
+			for i, count := range embedding.Root.N {
+				embedding.Root.N[i] = count / sum
+			}
+		}
+	}
+	{
+		sum := float32(0.0)
+		for _, value := range embedding.Root.N2 {
+			sum += value
+		}
+		if sum > 0 {
+			for i, count := range embedding.Root.N2 {
+				embedding.Root.N2[i] = count / sum
 			}
 		}
 	}
@@ -1727,17 +1733,16 @@ func main() {
 		buffer := make([]State, 0, 8)
 		prompt := []byte("What is the meaning of life?")
 		for _, value := range prompt {
-			embed := embedding.Get2(markov)
+			entry := embedding.Get(markov)
 			markov.Iterate(value)
 			buffer = append(buffer, State{
-				Image: embed,
+				Image: entry.N2,
 			})
 		}
 		for range 33 {
-			distribution := embedding.Get(markov)
-			embed := embedding.Get2(markov)
+			entry := embedding.Get(markov)
 			total, selected, index := float32(0.0), rng.Float32(), 0
-			for i, value := range distribution {
+			for i, value := range entry.N {
 				total += value
 				if selected < total {
 					index = i
@@ -1747,7 +1752,7 @@ func main() {
 			prompt = append(prompt, byte(index))
 			markov.Iterate(byte(index))
 			buffer = append(buffer, State{
-				Image: embed,
+				Image: entry.N2,
 			})
 		}
 		LearnEmbedding(512, rng, buffer)
