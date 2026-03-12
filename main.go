@@ -62,13 +62,23 @@ type Book struct {
 func LoadBooks() []Book {
 	books := []Book{
 		{Name: "10.txt.utf-8.bz2"},
+		{Name: "11.txt.utf-8.bz2"},
+		{Name: "43.txt.utf-8.bz2"},
 		{Name: "pg74.txt.bz2"},
 		{Name: "76.txt.utf-8.bz2"},
 		{Name: "84.txt.utf-8.bz2"},
 		{Name: "100.txt.utf-8.bz2"},
+		{Name: "145.txt.utf-8.bz2"},
+		{Name: "768.txt.utf-8.bz2"},
+		{Name: "1260.txt.utf-8.bz2"},
+		{Name: "1342.txt.utf-8.bz2"},
 		{Name: "1837.txt.utf-8.bz2"},
+		{Name: "2641.txt.utf-8.bz2"},
 		{Name: "2701.txt.utf-8.bz2"},
 		{Name: "3176.txt.utf-8.bz2"},
+		{Name: "37106.txt.utf-8.bz2"},
+		{Name: "64317.txt.utf-8.bz2"},
+		{Name: "67979.txt.utf-8.bz2"},
 	}
 	load := func(book string) []byte {
 		file, err := Books.Open(book)
