@@ -29,6 +29,7 @@ import (
 	"github.com/pointlander/gradient/tf32"
 	"github.com/pointlander/gradient/tf64"
 	"github.com/pointlander/symmetry/kmeans"
+	"github.com/pointlander/symmetry/pagerank"
 )
 
 const (
@@ -1740,7 +1741,35 @@ func main() {
 		}
 		LearnEmbedding(512, rng, buffer)
 		s := float32(0.0)
-		for i := range EmbeddingSize {
+		g := pagerank.NewGraph(len(buffer), rng)
+		for i := range buffer {
+			for j := range buffer {
+				sum := float32(0.0)
+				for k, value := range buffer[i].Embedding {
+					diff := value - buffer[j].Embedding[k]
+					sum += diff * diff
+				}
+				d := math.Sqrt(float64(sum))
+				g.Link(uint32(i), uint32(j), d)
+			}
+		}
+		ranks := make([]float64, len(buffer))
+		g.Rank(1, 0.000001, func(node int, rank float64) {
+			ranks[node] = rank
+		})
+		sum := 0.0
+		for _, value := range ranks {
+			sum += value
+		}
+		avg := sum / float64(len(ranks))
+		v := 0.0
+		for _, value := range ranks {
+			diff := value - avg
+			v += diff * diff
+		}
+		v /= float64(len(ranks))
+		s = float32(v)
+		/*for i := range EmbeddingSize {
 			sum := float32(0.0)
 			for j := range buffer {
 				sum += buffer[j].Embedding[i]
@@ -1753,7 +1782,7 @@ func main() {
 			}
 			variance /= float32(len(buffer))
 			s += float32(math.Sqrt(float64(variance)))
-		}
+		}*/
 		results = append(results, Result{
 			Value: prompt,
 			S:     s,
